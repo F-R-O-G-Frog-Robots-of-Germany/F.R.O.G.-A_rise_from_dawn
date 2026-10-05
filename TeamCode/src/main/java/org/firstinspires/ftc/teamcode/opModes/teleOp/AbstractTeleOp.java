@@ -18,6 +18,7 @@ import org.firstinspires.ftc.teamcode.core.control.periodicRegistry;
 import org.firstinspires.ftc.teamcode.core.control.taskManager;
 import org.firstinspires.ftc.teamcode.core.inputs.InputManager;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
+import org.firstinspires.ftc.teamcode.core.pedro.PoseMirroring;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 import org.firstinspires.ftc.teamcode.core.units.Units.RobotState;
 
@@ -154,6 +155,12 @@ public abstract class AbstractTeleOp extends LinearOpMode {
 
     protected final boolean limelightVideoEnabled() {
         return !compMode;
+    }
+
+    protected final void resetPose(double x, double y) {
+        Pose startPose = new Pose(x, y, toRadians(90.0));
+        follower.setPose(PoseMirroring.mirror_if_blue(startPose, alliance));
+        follower.update();
     }
 
     private void initializeStartingPose() {

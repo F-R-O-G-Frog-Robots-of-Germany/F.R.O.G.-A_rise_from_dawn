@@ -3,12 +3,14 @@ package org.firstinspires.ftc.teamcode.core.inputs;
 public class GamepadTrigger {
 
     private static final double FULL_PRESS_THRESHOLD = 0.95;
+    private static final double RELEASE_THRESHOLD = 0.05;
 
     private final ListenerList<TriggerListener> fullPressListeners = new ListenerList<>();
     private final ListenerList<TriggerListener> releaseListeners = new ListenerList<>();
     private final ListenerList<TriggerListener> pressListeners = new ListenerList<>();
 
     double value;
+    private boolean fullyPressed;
 
     public interface TriggerListener {
         void execute(double value);
@@ -48,20 +50,26 @@ public class GamepadTrigger {
 
     public void clearTriggerReleaseListeners() {
         releaseListeners.clear();
+    }    void update(double newValue) {
+        if (newValue == value) {
+            return;
+        }
+
+        if (fullyPressed) {
+            if (newValue < RELEASE_THRESHOLD) {
+                onRelease(newValue);
+                fullyPressed = false;
+            }
+        } else if (newValue >= FULL_PRESS_THRESHOLD) {
+            onFullPress();
+            fullyPressed = true;
+        } else {
+            onPress(newValue);
+        }
+
+        value = newValue;
     }
 
-    void update(double newValue) {
-        if (newValue != value) {
-            if (newValue >= FULL_PRESS_THRESHOLD) {
-                onFullPress();
-            } else if (value >= FULL_PRESS_THRESHOLD) {
-                onRelease(newValue);
-            } else {
-                onPress(newValue);
-            }
-            value = newValue;
-        }
-    }
 
     void onFullPress() {
         for (TriggerListener listener : fullPressListeners.get()) {
