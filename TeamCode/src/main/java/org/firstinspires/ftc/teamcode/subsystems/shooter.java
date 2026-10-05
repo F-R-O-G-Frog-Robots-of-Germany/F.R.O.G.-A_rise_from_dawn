@@ -196,6 +196,10 @@ public class shooter {
         return targetRpm;
     }
 
+    public double getCurrentRpm() {
+        return shooterMotor.raw().getVelocity() * 60.0 / (TICKS_PER_REV * GEAR_RATIO);
+    }
+
     public void setTargetRpm(double targetRpm) {
         this.targetRpm = Math.max(0.0, targetRpm);
     }

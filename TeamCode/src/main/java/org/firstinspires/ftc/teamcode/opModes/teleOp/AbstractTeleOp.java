@@ -10,9 +10,11 @@ import com.pedropathing.math.Pose;
 import com.bylazar.panels.Panels;
 import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 
+import org.firstinspires.ftc.teamcode.core.control.CompConfig;
 import org.firstinspires.ftc.teamcode.core.control.lastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.control.periodicRegistry;
 import org.firstinspires.ftc.teamcode.core.control.taskManager;
@@ -39,9 +41,6 @@ import java.util.List;
 public abstract class AbstractTeleOp extends LinearOpMode {
     private static final Pose DEFAULT_STARTING_POSE = new Pose(9.0, 9.0, toRadians(90.0));
 
-    /** Set true for competition runs to disable Panels and nonessential telemetry output. */
-    protected boolean compMode = false;
-
     protected double driveDirection = 1.0;
     protected double driveSpeed = 1.0;
     protected double vetoSpeed = 1.0;
@@ -49,16 +48,17 @@ public abstract class AbstractTeleOp extends LinearOpMode {
     protected RobotState robotState;
     protected Follower follower;
     protected final InputManager inputManager = new InputManager();
+    private final ElapsedTime loopTimer = new ElapsedTime();
     private Telemetry telemetryManager;
 
     private List<LynxModule> allHubs;
 
     @Override
     public final void runOpMode() throws InterruptedException {
-        if (compMode) {
-            Panels.INSTANCE.disable();
-        } else {
+        if (CompConfig.panelsEnabled()) {
             Panels.INSTANCE.enable();
+        } else {
+            Panels.INSTANCE.disable();
         }
         taskManager.init();
         periodicRegistry.clear();
@@ -71,12 +71,12 @@ public abstract class AbstractTeleOp extends LinearOpMode {
 
             telemetryManager = telemetry;
             follower = Constants.createFollower(hardwareMap);
-            setLimelightVideoEnabled(!compMode);
+            setLimelightVideoEnabled(CompConfig.videoEnabled());
             initializeStartingPose();
             robotState = RobotState.INIT;
             onInit();
 
-            if (!compMode) {
+            if (CompConfig.telemetryEnabled()) {
                 getTelemetryManager().addLine("Init");
                 getTelemetryManager().update();
             }
@@ -93,27 +93,30 @@ public abstract class AbstractTeleOp extends LinearOpMode {
             robotState = RobotState.TELEOP;
             onStart();
 
-            long lastNano = System.nanoTime();
+            if (CompConfig.loopTimeTelemetryEnabled()) loopTimer.reset();
             while (opModeIsActive()) {
+                boolean showLoopTime = CompConfig.loopTimeTelemetryEnabled();
+                double loopStartMs = showLoopTime ? loopTimer.milliseconds() : 0.0;
                 clearBulkCache();
 
-                long nowNano = System.nanoTime();
-                double loopTimeMs = (nowNano - lastNano) / 1_000_000.0;
-                lastNano = nowNano;
                 inputManager.update(gamepad1, gamepad2);
                 follower.update();
                 periodicRegistry.runAll();
+                opModeLoop();
 
-                if (!compMode) {
+                double loopTimeMs = showLoopTime ? loopTimer.milliseconds() - loopStartMs : 0.0;
+                if (showLoopTime) {
                     getTelemetryManager().addData("Loop ms", loopTimeMs);
+                }
+                if (CompConfig.telemetryEnabled()) {
                     getTelemetryManager().addData("Hz", loopTimeMs > 0.0 ? 1000.0 / loopTimeMs : 0.0);
                     getTelemetryManager().addData("x [in]", follower.pose().x());
                     getTelemetryManager().addData("y [in]", follower.pose().y());
                     getTelemetryManager().addData("heading [°]", toDegrees(follower.pose().heading()));
+                }
+                if (showLoopTime || CompConfig.telemetryEnabled()) {
                     getTelemetryManager().update();
                 }
-
-                opModeLoop();
             }
         } finally {
             try {
@@ -140,21 +143,8 @@ public abstract class AbstractTeleOp extends LinearOpMode {
         return telemetryManager != null ? telemetryManager : telemetry;
     }
 
-    protected final boolean telemetryEnabled() {
-        return !compMode;
-    }
-
-    /** Competition mode disables Panels along with nonessential telemetry output. */
-    protected final boolean panelsEnabled() {
-        return !compMode;
-    }
-
     /** Future Limelight integration point; no Limelight object is created here yet. */
     protected void setLimelightVideoEnabled(boolean enabled) {
-    }
-
-    protected final boolean limelightVideoEnabled() {
-        return !compMode;
     }
 
     protected final void resetPose(double x, double y) {
@@ -170,7 +160,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
         } else {
             alliance = Alliance.BLUE;
             follower.setPose(DEFAULT_STARTING_POSE);
-            if (!compMode) {
+            if (CompConfig.telemetryEnabled()) {
                 getTelemetryManager().addLine("Starting pose not available");
                 getTelemetryManager().update();
             }

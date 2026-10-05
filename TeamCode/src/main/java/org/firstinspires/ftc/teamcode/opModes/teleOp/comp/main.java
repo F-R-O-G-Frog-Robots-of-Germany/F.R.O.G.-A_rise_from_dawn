@@ -7,6 +7,7 @@ import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 
 import org.firstinspires.ftc.teamcode.Robot;
+import org.firstinspires.ftc.teamcode.core.control.CompConfig;
 import org.firstinspires.ftc.teamcode.opModes.teleOp.AbstractTeleOp;
 import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.intake;
@@ -21,14 +22,10 @@ public class main extends AbstractTeleOp {
     private double driveForward = 0, driveStrafe = 0, driveTurn = 0;
     private static final double DEADBAND = 0.05;
 
-    public main() {
-        compMode = true;
-    }
-
     @Override
     protected void onInit() {
         robot = new Robot();
-        robot.initRobot(hardwareMap, follower, alliance, telemetry, panelsEnabled());
+        robot.initRobot(hardwareMap, follower, alliance, telemetry, CompConfig.panelsEnabled());
         shooterSubsystem = robot.getShooter();
         intakeSubsystem = robot.getIntake();
         flowerIntakeSubsystem = robot.getFlowerIntake();
