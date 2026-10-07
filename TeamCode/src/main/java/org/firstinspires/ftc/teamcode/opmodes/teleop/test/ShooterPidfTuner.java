@@ -1,16 +1,17 @@
-package org.firstinspires.ftc.teamcode.opModes.teleOp.test;
+package org.firstinspires.ftc.teamcode.opmodes.teleop.test;
 
 import com.pedropathing.follower.Follower;
+import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.PIDFCoefficients;
 
-import org.firstinspires.ftc.teamcode.core.control.lastPositionStorage;
+import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
-import org.firstinspires.ftc.teamcode.subsystems.shooter;
+import org.firstinspires.ftc.teamcode.subsystems.Shooter;
 
 /**
  * Test opMode for tuning the shooter velocity controller and flywheel distance formula.
@@ -40,7 +41,6 @@ public class ShooterPidfTuner extends LinearOpMode {
     private Follower follower;
     private Alliance alliance;
     private double targetRpm = DEFAULT_TARGET_RPM;
-    private double targetVelocityTicksPerSecond = rpmToTicksPerSecond(DEFAULT_TARGET_RPM);
     private PIDFCoefficients pidf = new PIDFCoefficients(DEFAULT_P, DEFAULT_I, DEFAULT_D, DEFAULT_F);
     private PidfParameter selectedParameter = PidfParameter.P;
     private boolean shooterEnabled = false;
@@ -55,64 +55,93 @@ public class ShooterPidfTuner extends LinearOpMode {
     private boolean previousDpadLeft;
     private boolean previousRightBumper;
     private boolean previousLeftBumper;
+    private boolean previousModel;
+    private boolean previousModelLeft, previousModelRight, previousModelDecrease, previousModelIncrease;
+    private boolean distanceModelEnabled;
+    private int selectedCoefficient;
+    private final double[] coefficients = {Shooter.DISTANCE_A, Shooter.DISTANCE_B, Shooter.DISTANCE_C};
+    private static final double[] COEFFICIENT_STEPS = {0.0001, 0.01, 1.0};
+    private double commandedRpm = DEFAULT_TARGET_RPM;
+    private String modelMessage = "Fit A/B/C in Desmos and enter them in Shooter.java manually";
 
     @Override
     public void runOpMode() throws InterruptedException {
-        shooterMotor = hardwareMap.get(DcMotorEx.class, "shooter");
-        shooterMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-        shooterMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-        applyPidf();
+        try {
+            shooterMotor = hardwareMap.get(DcMotorEx.class, "shooter");
+            shooterMotor.setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            shooterMotor.setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            apply_pidf();
 
-        follower = Constants.createFollower(hardwareMap);
-        alliance = lastPositionStorage.getCurrentAlliance();
-        follower.update();
-        telemetry.setMsTransmissionInterval(LOOP_PERIOD_MS);
-
-        telemetry.addLine("Shooter PIDF tuner ready");
-        telemetry.addLine("Start: toggle | Y/B: RPM | D-pad: P/I/D/F");
-        telemetry.addLine("Bumpers: decrease/increase selected PIDF");
-        telemetry.update();
-
-        waitForStart();
-        if (isStopRequested()) {
-            return;
-        }
-
-        while (opModeIsActive()) {
+            follower = Constants.create_follower(hardwareMap);
+            alliance = LastPositionStorage.get_current_alliance();
+            if (LastPositionStorage.valid_data_available()) follower.setPose(LastPositionStorage.get_last_position());
             follower.update();
-            updateControls();
+            telemetry.setMsTransmissionInterval(LOOP_PERIOD_MS);
 
-            if (shooterEnabled) {
-                shooterMotor.setVelocity(targetVelocityTicksPerSecond);
-            } else {
-                shooterMotor.setVelocity(0.0);
+            telemetry.addLine("Shooter PIDF tuner ready");
+            telemetry.addLine("Start: toggle | Y/B: RPM | D-pad: P/I/D/F");
+            telemetry.addLine("Bumpers: decrease/increase selected PIDF");
+            telemetry.addLine("G2 Y: model test; left/right: A/B/C; bumpers: edit");
+            telemetry.update();
+
+            waitForStart();
+            if (isStopRequested()) {
+                return;
             }
 
-            addTelemetry();
-            sleep(LOOP_PERIOD_MS);
-        }
+            while (opModeIsActive()) {
+                follower.update();
+                update_controls();
+                Pose pose = follower.pose();
+                Shooter.HiveDistance hive = Shooter.nearest_hive(pose.x(), pose.y(), alliance);
+                update_model_controls();
+                commandedRpm = distanceModelEnabled
+                        ? coefficients[0] * hive.distance * hive.distance + coefficients[1] * hive.distance + coefficients[2]
+                        : targetRpm;
+                if (!Double.isFinite(commandedRpm)) {
+                    commandedRpm = 0;
+                    modelMessage = "Invalid model output; motor command stopped";
+                }
+                commandedRpm = Math.max(0, commandedRpm);
 
-        shooterMotor.setVelocity(0.0);
-        shooterMotor.setPower(0.0);
+                if (shooterEnabled) {
+                    shooterMotor.setVelocity(rpm_to_ticks_per_second(commandedRpm));
+                } else {
+                    shooterMotor.setVelocity(0.0);
+                }
+
+                add_telemetry(pose, hive);
+                sleep(LOOP_PERIOD_MS);
+            }
+
+        } finally {
+            if (shooterMotor != null) {
+                shooterMotor.setVelocity(0.0);
+                shooterMotor.setPower(0.0);
+            }
+            if (follower != null) {
+                follower.stop();
+                follower.drivetrain.stop();
+            }
+        }
     }
 
-    private void updateControls() {
+    private void update_controls() {
         if (pressed(gamepad1.start, previousStart)) {
             shooterEnabled = !shooterEnabled;
         }
         if (pressed(gamepad1.back, previousBack)) {
             targetRpm = DEFAULT_TARGET_RPM;
-            targetVelocityTicksPerSecond = rpmToTicksPerSecond(targetRpm);
             pidf = new PIDFCoefficients(DEFAULT_P, DEFAULT_I, DEFAULT_D, DEFAULT_F);
             selectedParameter = PidfParameter.P;
-            applyPidf();
+            apply_pidf();
         }
 
         if (pressed(gamepad1.y, previousY)) {
-            setTargetRpm(targetRpm + RPM_STEP);
+            set_target_rpm(targetRpm + RPM_STEP);
         }
         if (pressed(gamepad1.b, previousB)) {
-            setTargetRpm(targetRpm - RPM_STEP);
+            set_target_rpm(targetRpm - RPM_STEP);
         }
 
         if (pressed(gamepad1.dpad_up, previousDpadUp)) {
@@ -128,10 +157,10 @@ public class ShooterPidfTuner extends LinearOpMode {
             selectedParameter = PidfParameter.F;
         }
         if (pressed(gamepad1.right_bumper, previousRightBumper)) {
-            changeSelectedPidf(1.0);
+            change_selected_pidf(1.0);
         }
         if (pressed(gamepad1.left_bumper, previousLeftBumper)) {
-            changeSelectedPidf(-1.0);
+            change_selected_pidf(-1.0);
         }
 
         previousStart = gamepad1.start;
@@ -146,12 +175,11 @@ public class ShooterPidfTuner extends LinearOpMode {
         previousLeftBumper = gamepad1.left_bumper;
     }
 
-    private void setTargetRpm(double rpm) {
+    private void set_target_rpm(double rpm) {
         targetRpm = Math.max(0.0, rpm);
-        targetVelocityTicksPerSecond = rpmToTicksPerSecond(targetRpm);
     }
 
-    private void changeSelectedPidf(double direction) {
+    private void change_selected_pidf(double direction) {
         switch (selectedParameter) {
             case P:
                 pidf.p = Math.max(0.0, pidf.p + direction * 0.0001);
@@ -166,24 +194,44 @@ public class ShooterPidfTuner extends LinearOpMode {
                 pidf.f = Math.max(0.0, pidf.f + direction * 0.0001);
                 break;
         }
-        applyPidf();
+        apply_pidf();
     }
 
-    private void applyPidf() {
+    private void apply_pidf() {
         if (shooterMotor != null) {
             shooterMotor.setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
         }
     }
 
-    private void addTelemetry() {
+    private void update_model_controls() {
+        if (pressed(gamepad2.y, previousModel)) distanceModelEnabled = !distanceModelEnabled;
+        if (pressed(gamepad2.dpad_left, previousModelLeft)) selectedCoefficient = (selectedCoefficient + 2) % 3;
+        if (pressed(gamepad2.dpad_right, previousModelRight)) selectedCoefficient = (selectedCoefficient + 1) % 3;
+        if (pressed(gamepad2.left_bumper, previousModelDecrease)) {
+            coefficients[selectedCoefficient] -= COEFFICIENT_STEPS[selectedCoefficient];
+        }
+        if (pressed(gamepad2.right_bumper, previousModelIncrease)) {
+            coefficients[selectedCoefficient] += COEFFICIENT_STEPS[selectedCoefficient];
+        }
+        previousModel = gamepad2.y;
+        previousModelLeft = gamepad2.dpad_left; previousModelRight = gamepad2.dpad_right;
+        previousModelDecrease = gamepad2.left_bumper; previousModelIncrease = gamepad2.right_bumper;
+    }
+
+    private void add_telemetry(Pose pose, Shooter.HiveDistance nearestHive) {
         double measuredVelocity = Math.abs(shooterMotor.getVelocity());
-        double measuredRpm = measuredVelocity * 60.0 / shooter.TICKS_PER_REV;
-        double robotX = follower.pose().x();
-        double robotY = follower.pose().y();
-        shooter.HiveDistance nearestHive = shooter.nearestHive(robotX, robotY, alliance);
+        double measuredRpm = measuredVelocity * 60.0 / Shooter.TICKS_PER_REV;
+        double robotX = pose.x();
+        double robotY = pose.y();
 
         telemetry.addData("Shooter", shooterEnabled ? "RUNNING" : "OFF");
-        telemetry.addData("Target RPM", "%.1f", targetRpm);
+        telemetry.addData("Target RPM", "%.1f", commandedRpm);
+        telemetry.addData("Target mode", distanceModelEnabled ? "QUADRATIC MODEL" : "MANUAL RPM");
+        telemetry.addData("Selected coefficient", "ABC".charAt(selectedCoefficient));
+        telemetry.addData("A (RPM/in^2)", "%.8f", coefficients[0]);
+        telemetry.addData("B (RPM/in)", "%.8f", coefficients[1]);
+        telemetry.addData("C (RPM)", "%.8f", coefficients[2]);
+        telemetry.addData("Model", modelMessage);
         telemetry.addData("Measured RPM", "%.1f", measuredRpm);
         telemetry.addData("Selected PIDF", selectedParameter.name());
         telemetry.addData("PIDF step", "P/F: 0.0001 | I: 0.00000001 | D: 0.000001");
@@ -199,8 +247,8 @@ public class ShooterPidfTuner extends LinearOpMode {
         telemetry.update();
     }
 
-    private static double rpmToTicksPerSecond(double rpm) {
-        return rpm * shooter.TICKS_PER_REV / 60.0;
+    private static double rpm_to_ticks_per_second(double rpm) {
+        return rpm * Shooter.TICKS_PER_REV / 60.0;
     }
 
     private static boolean pressed(boolean current, boolean previous) {

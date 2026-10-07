@@ -86,7 +86,7 @@ public final class Units {
             return this;
         }
 
-        public Angle clampDeg(double min, double max) {
+        public Angle clamp_deg(double min, double max) {
             double d = Math.min(Math.max(rad(radians).deg(), min), max);
             radians = deg(d).rad();
             return this;
@@ -149,42 +149,42 @@ public final class Units {
             this.amperes = amperes;
         }
 
-        public static Current A(double a) {
+        public static Current a(double a) {
             return new Current(a);
         }
 
-        public static Current mA(double milliAmp) {
+        public static Current m_a(double milliAmp) {
             return new Current(milliAmp / 1000.0);
         }
 
-        public static Current uA(double microAmp) {
+        public static Current u_a(double microAmp) {
             return new Current(microAmp / 1_000_000.0);
         }
 
-        public static Current kA(double kiloAmp) {
+        public static Current k_a(double kiloAmp) {
             return new Current(kiloAmp * 1000.0);
         }
 
-        public double A() {
+        public double a() {
             return amperes;
         }
 
-        public double mA() {
+        public double m_a() {
             return amperes * 1000.0;
         }
 
-        public double uA() {
+        public double u_a() {
             return amperes * 1_000_000.0;
         }
 
-        public double kA() {
+        public double k_a() {
             return amperes / 1000.0;
         }
 
         @NonNull
         @Override
         public String toString() {
-            return A() + "A";
+            return a() + "A";
         }
     }
 
@@ -195,26 +195,26 @@ public final class Units {
             this.newtons = newtons;
         }
 
-        public static Force N(double newtons) {
+        public static Force n(double newtons) {
             return new Force(newtons);
         }
 
-        public static Force kN(double kilonewtons) {
+        public static Force k_n(double kilonewtons) {
             return new Force(kilonewtons * 1000.0);
         }
 
-        public double N() {
+        public double n() {
             return newtons;
         }
 
-        public double kN() {
+        public double k_n() {
             return newtons / 1000.0;
         }
 
         @NonNull
         @Override
         public String toString() {
-            return N() + "N";
+            return n() + "N";
         }
     }
 
@@ -272,20 +272,20 @@ public final class Units {
     }
 
     public static class Position {
-        public Length x;
-        public Length y;
-        public Length z;
+        public Length X;
+        public Length Y;
+        public Length Z;
 
-        public Position(Length x, Length y, Length z) {
-            this.x = x;
-            this.y = y;
-            this.z = z;
+        public Position(Length X, Length Y, Length Z) {
+            this.X = X;
+            this.Y = Y;
+            this.Z = Z;
         }
 
         @NonNull
         @Override
         public String toString() {
-            return x + " | " + y + " | " + z;
+            return X + " | " + Y + " | " + Z;
         }
     }
 
@@ -341,26 +341,26 @@ public final class Units {
             this.newtonMeters = newtonMeters;
         }
 
-        public static Torque Nm(double newtonMeters) {
+        public static Torque nm(double newtonMeters) {
             return new Torque(newtonMeters);
         }
 
-        public static Torque Ncm(double newtonCentimeters) {
+        public static Torque ncm(double newtonCentimeters) {
             return new Torque(newtonCentimeters / 100.0);
         }
 
-        public double Nm() {
+        public double nm() {
             return newtonMeters;
         }
 
-        public double Ncm() {
+        public double ncm() {
             return newtonMeters * 100.0;
         }
 
         @NonNull
         @Override
         public String toString() {
-            return Nm() + "Nm";
+            return nm() + "Nm";
         }
     }
 

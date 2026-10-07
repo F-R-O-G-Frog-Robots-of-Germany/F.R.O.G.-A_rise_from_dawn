@@ -27,6 +27,8 @@ import static com.pedropathing.utils.Utils.quadraticFit;
  * Licensed under the Pedro Pathing BSD 3-Clause Clear License.
  */
 public class ForesightTuner extends Procedure {
+    // List.of requires Android API 30+. Older-device compatibility is intentionally deferred
+    // because the team targets its selected newer devices; keep the Pedro procedures intact.
     private final Function<HardwareMap, Localizer> localizerFunction;
     private final Function<HardwareMap, Drivetrain> drivetrainFunction;
 
@@ -282,7 +284,7 @@ class HeadingBraking extends TuningOpMode<List<Double>> {
         Localizer localizer = localizerFunction.apply(hardwareMap);
         Drivetrain drivetrain = drivetrainFunction.apply(hardwareMap);
         List<double[]> samples = new ArrayList<>();
-        double[] powers = biasedGradient(TRIALS, MAX_POWER, MIN_POWER, BIAS);
+        double[] powers = biased_gradient(TRIALS, MAX_POWER, MIN_POWER, BIAS);
         double totalHeading = 0.0;
         double previousHeading = 0.0;
         double startHeading = 0.0;
@@ -323,7 +325,7 @@ class HeadingBraking extends TuningOpMode<List<Double>> {
         return List.of(coefficients[0], coefficients[1]);
     }
 
-    private static double[] biasedGradient(int count, double max, double min, double bias) {
+    private static double[] biased_gradient(int count, double max, double min, double bias) {
         double[] values = new double[count];
         if (count == 1) {
             values[0] = max;
@@ -421,7 +423,7 @@ abstract class BrakingTuner extends TuningOpMode<List<Double>> {
         Drivetrain drivetrain = drivetrainFunction.apply(hardwareMap);
         List<double[]> samples = new ArrayList<>();
         int trials = 5;
-        double[] powers = biasedGradient(trials, 0.7, 0.3, 1.5);
+        double[] powers = biased_gradient(trials, 0.7, 0.3, 1.5);
         ElapsedTime timer = new ElapsedTime();
         double start = 0.0;
         double velocity = 0.0;
@@ -439,8 +441,8 @@ abstract class BrakingTuner extends TuningOpMode<List<Double>> {
             if (!braking) {
                 double target = iteration % 2 == 0 ? distance : 12.0;
                 boolean reached = iteration % 2 == 0 ? Math.abs(position) >= target : Math.abs(position) <= target;
-                drivetrain.drive(forward ? new DrivePowers(powers[iteration] * direction, 0, headingPower(localizer))
-                        : new DrivePowers(0, powers[iteration] * direction, headingPower(localizer)), false);
+                drivetrain.drive(forward ? new DrivePowers(powers[iteration] * direction, 0, heading_power(localizer))
+                        : new DrivePowers(0, powers[iteration] * direction, heading_power(localizer)), false);
                 if (reached) {
                     start = position;
                     velocity = Math.abs(signedVelocity);
@@ -448,8 +450,8 @@ abstract class BrakingTuner extends TuningOpMode<List<Double>> {
                     timer.reset();
                 }
             } else {
-                drivetrain.drive(forward ? new DrivePowers(-0.2 * direction, 0, headingPower(localizer))
-                        : new DrivePowers(0, -0.2 * direction, headingPower(localizer)), false);
+                drivetrain.drive(forward ? new DrivePowers(-0.2 * direction, 0, heading_power(localizer))
+                        : new DrivePowers(0, -0.2 * direction, heading_power(localizer)), false);
                 if (Math.abs(signedVelocity) < 0.25 || timer.seconds() > 7.0) {
                     samples.add(new double[]{velocity, Math.abs(position - start)});
                     iteration++;
@@ -464,7 +466,7 @@ abstract class BrakingTuner extends TuningOpMode<List<Double>> {
         return List.of(fit[0], fit[1]);
     }
 
-    private double headingPower(Localizer localizer) {
+    private double heading_power(Localizer localizer) {
         double angularVelocity = localizer.velocity().omega;
         double predictedBrake = headingLinear * angularVelocity
                 + headingQuadratic * angularVelocity * angularVelocity * Math.signum(angularVelocity);
@@ -472,7 +474,7 @@ abstract class BrakingTuner extends TuningOpMode<List<Double>> {
         return Utils.clamp(headingKp * error, -0.3, 1.0) / 2.0;
     }
 
-    private static double[] biasedGradient(int count, double max, double min, double bias) {
+    private static double[] biased_gradient(int count, double max, double min, double bias) {
         double[] values = new double[count];
         for (int i = 0; i < count; i++) {
             double t = count == 1 ? 0.0 : (double) i / (count - 1);

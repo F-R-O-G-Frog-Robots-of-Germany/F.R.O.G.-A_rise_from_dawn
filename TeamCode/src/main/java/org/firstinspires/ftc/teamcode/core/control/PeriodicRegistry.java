@@ -6,18 +6,18 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * Callbacks that need to run once per OpMode loop tick, on the loop's own thread.
  *
  * Subsystems register their periodic work here during init() instead of every
- * OpMode author having to remember to call it from opModeLoop(). AbstractTeleOp
+ * OpMode author having to remember to call it from op_mode_loop(). AbstractTeleOp
  * drains this list once per iteration on the same thread that drives motors,
- * so there's no cross-thread race with subsystem calls made from opModeLoop().
+ * so there's no cross-thread race with subsystem calls made from op_mode_loop().
  *
- * Unrelated to taskManager: that one runs work on a background worker thread for
+ * Unrelated to TaskManager: that one runs work on a background worker thread for
  * delayed/periodic jobs. This one is for per-tick bookkeeping that must run on
  * the loop thread itself — e.g. Units.Timer state other loop code reads.
  */
-public final class periodicRegistry {
+public final class PeriodicRegistry {
     private static final CopyOnWriteArrayList<Runnable> callbacks = new CopyOnWriteArrayList<>();
 
-    private periodicRegistry() {
+    private PeriodicRegistry() {
     }
 
     public static void register(Runnable callback) {
@@ -28,7 +28,7 @@ public final class periodicRegistry {
         callbacks.clear();
     }
 
-    public static void runAll() {
+    public static void run_all() {
         for (Runnable callback : callbacks) {
             callback.run();
         }

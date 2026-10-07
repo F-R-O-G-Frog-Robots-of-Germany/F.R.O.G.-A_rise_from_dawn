@@ -31,10 +31,10 @@ public class MecanumTuner extends Procedure {
         awaitInputs(motorNames);
 
         confirmation("Motor Directions", "Each drivetrain motor will spin, one at a time. After each one, enter whether it spun forward or reversed.");
-        Direction frontLeftDirection = testMotor(Display.FourWheelBot.Wheel.FRONT_LEFT, "Front Left", frontLeftName.get());
-        Direction frontRightDirection = testMotor(Display.FourWheelBot.Wheel.FRONT_RIGHT, "Front Right", frontRightName.get());
-        Direction backLeftDirection = testMotor(Display.FourWheelBot.Wheel.BACK_LEFT, "Back Left", backLeftName.get());
-        Direction backRightDirection = testMotor(Display.FourWheelBot.Wheel.BACK_RIGHT, "Back Right", backRightName.get());
+        Direction frontLeftDirection = test_motor(Display.FourWheelBot.Wheel.FRONT_LEFT, "Front Left", frontLeftName.get());
+        Direction frontRightDirection = test_motor(Display.FourWheelBot.Wheel.FRONT_RIGHT, "Front Right", frontRightName.get());
+        Direction backLeftDirection = test_motor(Display.FourWheelBot.Wheel.BACK_LEFT, "Back Left", backLeftName.get());
+        Direction backRightDirection = test_motor(Display.FourWheelBot.Wheel.BACK_RIGHT, "Back Right", backRightName.get());
 
         result("frontLeftName", frontLeftName.get());
         result("frontRightName", frontRightName.get());
@@ -57,7 +57,7 @@ public class MecanumTuner extends Procedure {
                 "});");
     }
 
-    private Direction testMotor(Display.FourWheelBot.Wheel wheel, String displayName, String hardwareName) throws InterruptedException {
+    private Direction test_motor(Display.FourWheelBot.Wheel wheel, String displayName, String hardwareName) throws InterruptedException {
         final boolean[] correctMotor = new boolean[1];
         final Direction[] direction = new Direction[1];
         withDisplay(Display.fourWheelBot(wheel, false), () -> {

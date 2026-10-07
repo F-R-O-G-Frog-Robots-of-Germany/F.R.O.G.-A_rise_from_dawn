@@ -6,24 +6,31 @@ public final class CompConfig {
     }
 
     /** Disable Panels, video, and diagnostic telemetry for competition runs. */
-    public static final boolean compMode = true;
+    public static final boolean COMP_MODE = true;
 
     /** Show loop time on the Driver Station even when competition mode is on. */
-    public static final boolean loopTimeTelemetry = false;
+    public static final boolean LOOP_TIME_TELEMETRY = true;
 
-    public static boolean panelsEnabled() {
-        return !compMode;
+    /** Allow INIT selection telemetry in competition mode; false suppresses that exception. */
+    public static final boolean INIT_TELEMETRY = true;
+
+    public static boolean panels_enabled() {
+        return !COMP_MODE;
     }
 
-    public static boolean telemetryEnabled() {
-        return !compMode;
+    public static boolean telemetry_enabled() {
+        return !COMP_MODE;
     }
 
-    public static boolean videoEnabled() {
-        return !compMode;
+    public static boolean video_enabled() {
+        return !COMP_MODE;
     }
 
-    public static boolean loopTimeTelemetryEnabled() {
-        return !compMode || loopTimeTelemetry;
+    public static boolean loop_time_telemetry_enabled() {
+        return !COMP_MODE || LOOP_TIME_TELEMETRY;
+    }
+
+    public static boolean init_telemetry_enabled() {
+        return !COMP_MODE || INIT_TELEMETRY;
     }
 }

@@ -143,12 +143,12 @@ class TestsLine extends TuningOpMode<Boolean> {
     @Override
     protected Boolean runTuningOpMode() throws InterruptedException {
         Follower follower = followerFunction.apply(hardwareMap);
-        Pose start = Pose.zero();
-        Pose end = new Pose(distance, 0, 0);
-        Path forwardPath = line(start, end).constant(0);
-        Path reversePath = line(end, start).constant(0);
+        Pose START = Pose.zero();
+        Pose END = new Pose(distance, 0, 0);
+        Path forwardPath = line(START, END).constant(0);
+        Path reversePath = line(END, START).constant(0);
         boolean forward = true;
-        follower.setPose(start);
+        follower.setPose(START);
         waitForStart();
         follower.follow(forwardPath);
         while (opModeIsActive()) {
@@ -175,13 +175,13 @@ class TestsCurve extends TuningOpMode<Boolean> {
     @Override
     protected Boolean runTuningOpMode() throws InterruptedException {
         Follower follower = followerFunction.apply(hardwareMap);
-        Pose start = Pose.zero();
-        Pose corner = new Pose(distance, 0);
-        Pose end = new Pose(distance, distance);
-        Path forwardPath = curve(start, corner, end).tangent();
-        Path reversePath = curve(end, corner, start).tangent();
+        Pose START = Pose.zero();
+        Pose CORNER = new Pose(distance, 0);
+        Pose END = new Pose(distance, distance);
+        Path forwardPath = curve(START, CORNER, END).tangent();
+        Path reversePath = curve(END, CORNER, START).tangent();
         boolean forward = true;
-        follower.setPose(start);
+        follower.setPose(START);
         waitForStart();
         follower.follow(forwardPath);
         while (opModeIsActive()) {
@@ -208,14 +208,14 @@ class TestsInterpolation extends TuningOpMode<Boolean> {
     @Override
     protected Boolean runTuningOpMode() throws InterruptedException {
         Follower follower = followerFunction.apply(hardwareMap);
-        Pose start = Pose.zero();
-        Pose corner = new Pose(distance, 0);
-        Pose end = new Pose(distance, distance);
-        Path forwardPath = curve(start, corner, end).heading((path, t) -> Math.PI);
-        Path reversePath = curve(end, corner, start)
+        Pose START = Pose.zero();
+        Pose CORNER = new Pose(distance, 0);
+        Pose END = new Pose(distance, distance);
+        Path forwardPath = curve(START, CORNER, END).heading((path, t) -> Math.PI);
+        Path reversePath = curve(END, CORNER, START)
                 .heading(Interpolator.piecewise().until(0.5, Interpolator.tangent).until(1.0, Interpolator.constant(0)));
         boolean forward = true;
-        follower.setPose(start);
+        follower.setPose(START);
         waitForStart();
         follower.follow(forwardPath);
         while (opModeIsActive()) {

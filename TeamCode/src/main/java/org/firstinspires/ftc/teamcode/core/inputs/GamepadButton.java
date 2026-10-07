@@ -11,48 +11,48 @@ public class GamepadButton {
         void execute();
     }
 
-    public void addButtonPressListener(ButtonListener listener) {
+    public void add_button_press_listener(ButtonListener listener) {
         pressListeners.add(listener);
     }
 
-    public void removeButtonPressListener(ButtonListener listener) {
+    public void remove_button_press_listener(ButtonListener listener) {
         pressListeners.remove(listener);
     }
 
-    public void clearButtonPressListeners() {
+    public void clear_button_press_listeners() {
         pressListeners.clear();
     }
 
-    public void addButtonReleaseListener(ButtonListener listener) {
+    public void add_button_release_listener(ButtonListener listener) {
         releaseListeners.add(listener);
     }
 
-    public void removeButtonReleaseListener(ButtonListener listener) {
+    public void remove_button_release_listener(ButtonListener listener) {
         releaseListeners.remove(listener);
     }
 
-    public void clearButtonReleaseListeners() {
+    public void clear_button_release_listeners() {
         releaseListeners.clear();
     }
 
     void update(boolean newState) {
         if (newState != state) {
             if (newState) {
-                onPress();
+                on_press();
             } else {
-                onRelease();
+                on_release();
             }
             state = newState;
         }
     }
 
-    void onPress() {
+    void on_press() {
         for (ButtonListener listener : pressListeners.get()) {
             listener.execute();
         }
     }
 
-    void onRelease() {
+    void on_release() {
         for (ButtonListener listener : releaseListeners.get()) {
             listener.execute();
         }

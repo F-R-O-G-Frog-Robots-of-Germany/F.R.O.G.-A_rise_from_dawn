@@ -9,26 +9,26 @@ public class GamepadAnalogStick {
         void execute(double x, double y);
     }
 
-    public void addUpdateListener(UpdateListener listener) {
+    public void add_update_listener(UpdateListener listener) {
         listeners.add(listener);
     }
 
-    public void removeUpdateListener(UpdateListener listener) {
+    public void remove_update_listener(UpdateListener listener) {
         listeners.remove(listener);
     }
 
-    public void clearUpdateListenerList() {
+    public void clear_update_listener_list() {
         listeners.clear();
     }
 
     // Gamepad-y ist invertiert; "nach oben" soll positiv sein.
-    static double invertY(double y) {
+    static double invert_y(double y) {
         return -y;
     }
 
     void update(double x, double y) {
         for (UpdateListener listener : listeners.get()) {
-            listener.execute(x, invertY(y));
+            listener.execute(x, invert_y(y));
         }
     }
 

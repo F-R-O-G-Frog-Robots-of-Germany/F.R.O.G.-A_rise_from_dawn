@@ -7,24 +7,24 @@ public class GamepadAnalogSticks {
     private final ListenerList<UpdateListener> listeners = new ListenerList<>();
 
     public interface UpdateListener {
-        void execute(double left_x, double left_y, double right_x, double right_y);
+        void execute(double leftX, double leftY, double rightX, double rightY);
     }
 
-    public void addUpdateListener(UpdateListener listener) {
+    public void add_update_listener(UpdateListener listener) {
         listeners.add(listener);
     }
 
-    public void removeUpdateListener(UpdateListener listener) {
+    public void remove_update_listener(UpdateListener listener) {
         listeners.remove(listener);
     }
 
-    public void clearUpdateListenerList() {
+    public void clear_update_listener_list() {
         listeners.clear();
     }
 
-    void update(double left_x, double left_y, double right_x, double right_y) {
+    void update(double leftX, double leftY, double rightX, double rightY) {
         for (UpdateListener listener : listeners.get()) {
-            listener.execute(left_x, GamepadAnalogStick.invertY(left_y), right_x, GamepadAnalogStick.invertY(right_y));
+            listener.execute(leftX, GamepadAnalogStick.invert_y(leftY), rightX, GamepadAnalogStick.invert_y(rightY));
         }
     }
 

@@ -2,7 +2,7 @@ package org.firstinspires.ftc.teamcode.core.hardware;
 
 import com.qualcomm.robotcore.hardware.Servo;
 
-/** Wraps a Servo and only sends setPosition() to the hub when the value changed. */
+/** Wraps a Servo and only sends set_position() to the hub when the value changed. */
 public final class CachedServo {
     private final Servo servo;
     private final double eps;
@@ -13,7 +13,7 @@ public final class CachedServo {
         this.eps = eps;
     }
 
-    public synchronized void setPosition(double pos) {
+    public synchronized void set_position(double pos) {
         if (Double.isNaN(last) || Math.abs(pos - last) >= eps) {
             servo.setPosition(pos);
             last = pos;

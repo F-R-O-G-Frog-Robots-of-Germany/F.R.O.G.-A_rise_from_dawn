@@ -18,6 +18,8 @@ import java.util.OptionalDouble;
  * Licensed under the Pedro Pathing BSD 3-Clause Clear License.
  */
 public class PinpointTuner extends Procedure {
+    // List.of requires Android API 30+. Support for older devices is intentionally omitted
+    // for the team's selected devices; the tuning algorithm remains unchanged.
     private enum PodType {
         SWING_ARM,
         FOUR_BAR,
@@ -77,7 +79,7 @@ public class PinpointTuner extends Procedure {
                 "});");
     }
 
-    private static PinpointConfig createConfig(String name, PodType podType, OptionalDouble customPodScalar,
+    private static PinpointConfig create_config(String name, PodType podType, OptionalDouble customPodScalar,
                                                 boolean xReversed, boolean yReversed, double xOffset, double yOffset) {
         return new PinpointConfig(c -> {
             c.name.set(name);
@@ -110,7 +112,7 @@ public class PinpointTuner extends Procedure {
 
         @Override
         protected Double runTuningOpMode() {
-            PinpointConfig config = createConfig(name, PodType.CUSTOM, OptionalDouble.of(1.0), false, false, 0.0, 0.0);
+            PinpointConfig config = create_config(name, PodType.CUSTOM, OptionalDouble.of(1.0), false, false, 0.0, 0.0);
             PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap, config);
             localizer.setPose(new Pose(0, 0));
             waitForStart();
@@ -136,7 +138,7 @@ public class PinpointTuner extends Procedure {
         @Override
         protected Boolean runTuningOpMode() {
             PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap,
-                    createConfig(name, podType, customPodScalar, false, false, 0.0, 0.0));
+                    create_config(name, podType, customPodScalar, false, false, 0.0, 0.0));
             localizer.setPose(new Pose(0, 0));
             waitForStart();
             while (!isStopRequested()) {
@@ -161,7 +163,7 @@ public class PinpointTuner extends Procedure {
         @Override
         protected Boolean runTuningOpMode() {
             PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap,
-                    createConfig(name, podType, customPodScalar, false, false, 0.0, 0.0));
+                    create_config(name, podType, customPodScalar, false, false, 0.0, 0.0));
             localizer.setPose(new Pose(0, 0));
             waitForStart();
             while (!isStopRequested()) {
@@ -177,7 +179,7 @@ public class PinpointTuner extends Procedure {
         private final OptionalDouble customPodScalar;
         private final boolean forwardPodReversed;
         private final boolean strafePodReversed;
-        private Pose previous = Pose.zero();
+        private Pose PREVIOUS = Pose.zero();
 
         PinpointOffsets(String name, PodType podType, OptionalDouble customPodScalar,
                         boolean forwardPodReversed, boolean strafePodReversed) {
@@ -191,7 +193,7 @@ public class PinpointTuner extends Procedure {
 
         @Override
         protected List<Double> runTuningOpMode() {
-            PinpointConfig config = createConfig(name, podType, customPodScalar,
+            PinpointConfig config = create_config(name, podType, customPodScalar,
                     forwardPodReversed, strafePodReversed, 0.0, 0.0);
             if (customPodScalar.isPresent()) {
                 config = new PinpointConfig(c -> {
@@ -216,17 +218,17 @@ public class PinpointTuner extends Procedure {
             waitForStart();
             localizer.setPose(Pose.zero());
             while (!isStopRequested()) {
-                previous = localizer.pose();
+                PREVIOUS = localizer.pose();
                 localizer.update();
                 telemetry.addData("heading", localizer.pose().heading());
                 telemetry.addData("pose", localizer.pose());
-                telemetry.addData("previous", previous);
+                telemetry.addData("previous", PREVIOUS);
                 telemetry.update();
             }
             if (localizer.pose().x() != Pose.zero().x() || localizer.pose().y() != Pose.zero().y()) {
-                previous = localizer.pose();
+                PREVIOUS = localizer.pose();
             }
-            return List.of(-previous.y() / 2.0, -previous.x() / 2.0);
+            return List.of(-PREVIOUS.y() / 2.0, -PREVIOUS.x() / 2.0);
         }
     }
 }

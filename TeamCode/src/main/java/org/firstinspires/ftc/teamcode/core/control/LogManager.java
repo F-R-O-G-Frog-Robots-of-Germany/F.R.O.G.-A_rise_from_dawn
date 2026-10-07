@@ -6,13 +6,13 @@ import android.util.Log;
 
 import java.util.function.Supplier;
 
-public final class logManager {
+public final class LogManager {
     private static final int DEFAULT_LOG_TYPE = INFO;
     private static final String DEFAULT_LOG_TAG = "DEFAULTLOG";
 
-    public static boolean ENABLED = true;
+    public static boolean enabled = true;
 
-    private logManager() {
+    private LogManager() {
         // utility class, no instances
     }
 
@@ -27,7 +27,7 @@ public final class logManager {
     }
 
     public static void log(int logType, String tag, String msg) {
-        if (ENABLED) {
+        if (enabled) {
             Log.println(logType, tag, msg);
         }
     }
@@ -39,7 +39,7 @@ public final class logManager {
     }
 
     public static void log(int logType, String tag, Supplier<String> msgSupplier) {
-        if (ENABLED) {
+        if (enabled) {
             Log.println(logType, tag, msgSupplier.get());
         }
     }
@@ -68,7 +68,7 @@ public final class logManager {
  *    than the string-building it's meant to avoid.
  *
  *  - Disable all logging globally (e.g. before a competition run) by setting:
- *      LogManager.ENABLED = false;
+ *      LogManager.enabled = false;
  *    This skips the actual Log.println() write everywhere; plain-string overloads
  *    still build their message beforehand (cheap), Supplier-based calls don't.
  */

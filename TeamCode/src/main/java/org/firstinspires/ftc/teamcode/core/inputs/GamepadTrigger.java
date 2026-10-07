@@ -11,80 +11,86 @@ public class GamepadTrigger {
 
     double value;
     private boolean fullyPressed;
+    private boolean pressed;
 
     public interface TriggerListener {
         void execute(double value);
     }
 
-    public void addFullPressListener(TriggerListener listener) {
+    public void add_full_press_listener(TriggerListener listener) {
         fullPressListeners.add(listener);
     }
 
-    public void removeFullPressListener(TriggerListener listener) {
+    public void remove_full_press_listener(TriggerListener listener) {
         fullPressListeners.remove(listener);
     }
 
-    public void clearFullPressListeners() {
+    public void clear_full_press_listeners() {
         fullPressListeners.clear();
     }
 
-    public void addPressListener(TriggerListener listener) {
+    public void add_press_listener(TriggerListener listener) {
         pressListeners.add(listener);
     }
 
-    public void removePressListener(TriggerListener listener) {
+    public void remove_press_listener(TriggerListener listener) {
         pressListeners.remove(listener);
     }
 
-    public void clearPressListeners() {
+    public void clear_press_listeners() {
         pressListeners.clear();
     }
 
-    public void addTriggerReleaseListener(TriggerListener listener) {
+    public void add_trigger_release_listener(TriggerListener listener) {
         releaseListeners.add(listener);
     }
 
-    public void removeTriggerReleaseListener(TriggerListener listener) {
+    public void remove_trigger_release_listener(TriggerListener listener) {
         releaseListeners.remove(listener);
     }
 
-    public void clearTriggerReleaseListeners() {
+    public void clear_trigger_release_listeners() {
         releaseListeners.clear();
-    }    void update(double newValue) {
+    }
+
+    void update(double newValue) {
         if (newValue == value) {
             return;
         }
 
-        if (fullyPressed) {
-            if (newValue < RELEASE_THRESHOLD) {
-                onRelease(newValue);
-                fullyPressed = false;
-            }
-        } else if (newValue >= FULL_PRESS_THRESHOLD) {
-            onFullPress();
+        if (newValue <= RELEASE_THRESHOLD) {
+            boolean wasPressed = pressed;
+            pressed = false;
+            fullyPressed = false;
+            if (wasPressed) on_release(newValue);
+        } else if (!pressed) {
+            pressed = true;
+            on_press(newValue);
+        }
+
+        if (pressed && !fullyPressed && newValue >= FULL_PRESS_THRESHOLD) {
             fullyPressed = true;
-        } else {
-            onPress(newValue);
+            on_full_press();
         }
 
         value = newValue;
     }
 
 
-    void onFullPress() {
+    void on_full_press() {
         for (TriggerListener listener : fullPressListeners.get()) {
             listener.execute(1);
         }
     }
 
-    void onPress(double value) {
+    void on_press(double value) {
         for (TriggerListener listener : pressListeners.get()) {
             listener.execute(value);
         }
     }
 
     // Übergibt jetzt den echten Wert statt hartcodierter 0.
-    void onRelease(double value) {
+    void on_release(double value) {
         for (TriggerListener listener : releaseListeners.get()) {
             listener.execute(value);
         }

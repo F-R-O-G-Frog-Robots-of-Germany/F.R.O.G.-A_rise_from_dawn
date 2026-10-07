@@ -84,7 +84,7 @@ public final class Constants {
         c.timeoutConstraint.set(150.0);
     });
 
-    public static Follower createFollower(HardwareMap hardwareMap) {
+    public static Follower create_follower(HardwareMap hardwareMap) {
         return new Follower(
                 new PinpointLocalizer(hardwareMap, localizerConfig),
                 new Mecanum(hardwareMap, drivetrainConfig),

@@ -1,21 +1,18 @@
 
 package org.firstinspires.ftc.teamcode.core.control;
 
-import static org.firstinspires.ftc.teamcode.core.control.logManager.log;
+import static org.firstinspires.ftc.teamcode.core.control.LogManager.log;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import org.firstinspires.ftc.teamcode.core.units.Units.Time;
 
 import java.util.Set;
 import java.util.TreeSet;
-import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Named background tasks on a single low-priority worker thread.
@@ -33,47 +30,47 @@ import java.util.concurrent.TimeoutException;
  *       {@code Thread.currentThread().isInterrupted()} or use interruptible calls.</li>
  * </ul>
  */
-public final class taskManager {
+public final class TaskManager {
 
-    /** How long {@link #stopAll()} waits for running tasks to react to the interrupt. */
+/** How long {@link #stop_all()} waits for running tasks to react to the interrupt. */
     private static final long STOP_TIMEOUT_MS = 500;
 
     /** Guards {@link #executor}, {@link #currentWorker} and every put/cancel/clear on {@link #runningTasks}. */
     private static final Object lock = new Object();
     private static ScheduledExecutorService executor = null;
 
-    /** The worker thread currently backing {@link #executor}. Set by the thread factory in {@link #ensureExecutor()}. */
+/** The worker thread currently backing {@link #executor}. Set by the thread factory in {@link #ensure_executor()}. */
     private static volatile WorkerThread currentWorker = null;
 
     // Task completion removes its own entry with remove(name, entry) WITHOUT taking the lock,
     // so that removal must stay conditional: it only removes if the entry is still its own.
     private static final ConcurrentMap<String, Entry> runningTasks = new ConcurrentHashMap<>();
 
-    private taskManager() {
+    private TaskManager() {
     }
 
     public static void init() {
         synchronized (lock) {
-            ensureExecutor();
+            ensure_executor();
         }
     }
 
     // ---------------------------------------------------------------- scheduling
 
-    public static void schedule(String name, Runnable task, Time period) {
-        start(name, task, 0, toMillis(period, "period", 1), true);
+    public static void schedule(String name, Runnable task, Time PERIOD) {
+        start(name, task, 0, to_millis(PERIOD, "period", 1), true);
     }
 
-    public static void runOnce(String name, Runnable task) {
+    public static void run_once(String name, Runnable task) {
         start(name, task, 0, 0, false);
     }
 
-    public static void scheduleDelayed(String name, Runnable task, Time delay, Time period) {
-        start(name, task, toMillis(delay, "delay", 0), toMillis(period, "period", 1), true);
+    public static void schedule_delayed(String name, Runnable task, Time DELAY, Time PERIOD) {
+        start(name, task, to_millis(DELAY, "delay", 0), to_millis(PERIOD, "period", 1), true);
     }
 
-    public static void runOnceDelayed(String name, Runnable task, Time delay) {
-        start(name, task, toMillis(delay, "delay", 0), 0, false);
+    public static void run_once_delayed(String name, Runnable task, Time DELAY) {
+        start(name, task, to_millis(DELAY, "delay", 0), 0, false);
     }
 
     private static void start(String name, Runnable task,
@@ -85,10 +82,10 @@ public final class taskManager {
             throw new IllegalArgumentException("task must not be null");
         }
 
-        // Lifecycle, replacement and registration happen as one atomic step, so stopAll()
+// Lifecycle, replacement and registration happen as one atomic step, so stop_all()
         // can't shut the executor down between "get executor" and "submit".
         synchronized (lock) {
-            ScheduledExecutorService ex = ensureExecutor();
+            ScheduledExecutorService ex = ensure_executor();
 
             Entry old = runningTasks.remove(name);
             if (old != null) {
@@ -112,11 +109,11 @@ public final class taskManager {
         }
     }
 
-    private static long toMillis(Time time, String what, long minMs) {
-        if (time == null) {
+    private static long to_millis(Time TIME, String what, long minMs) {
+        if (TIME == null) {
             throw new IllegalArgumentException(what + " must not be null");
         }
-        double ms = time.ms();
+        double ms = TIME.ms();
         if (Double.isNaN(ms) || Double.isInfinite(ms)) {
             throw new IllegalArgumentException(what + " must be finite, got " + ms + " ms");
         }
@@ -134,6 +131,7 @@ public final class taskManager {
 
     private static Runnable wrap(Entry entry, Runnable task) {
         return () -> {
+            if (!entry.begin()) return;
             // Tracks whether the Error branch below already removed the entry, so the
             // finally block doesn't redundantly call unregister() a second time for a
             // one-shot task that throws an Error.
@@ -141,19 +139,20 @@ public final class taskManager {
             try {
                 task.run();
             } catch (Exception e) {
-                if (causedByInterrupt(e)) {
+                if (caused_by_interrupt(e)) {
                     // Keep the cancellation signal instead of swallowing it.
                     Thread.currentThread().interrupt();
                 } else {
-                    logError(entry.name + " failed: " + e);
+                    log_error(entry.name + " failed: " + e);
                 }
             } catch (Error e) {
                 // Fatal (OOM etc.): don't hide it. Drop the entry and let the executor record it.
-                logError(entry.name + " fatal error: " + e);
+                log_error(entry.name + " fatal error: " + e);
                 unregister(entry);
                 alreadyUnregistered = true;
                 throw e;
             } finally {
+                entry.end();
                 if (entry.oneShot && !alreadyUnregistered) {
                     unregister(entry);
                 }
@@ -161,7 +160,7 @@ public final class taskManager {
         };
     }
 
-    private static boolean causedByInterrupt(Throwable t) {
+    private static boolean caused_by_interrupt(Throwable t) {
         // Runnable.run() can't throw InterruptedException directly, but tasks often wrap it.
         for (int depth = 0; t != null && depth < 16; depth++, t = t.getCause()) {
             if (t instanceof InterruptedException) {
@@ -193,7 +192,7 @@ public final class taskManager {
                 entry.cancel();
             } catch (RuntimeException e) {
                 if (logFailure) {
-                    logError("cancel(" + name + ") failed: " + e);
+                    log_error("cancel(" + name + ") failed: " + e);
                 }
             }
         }
@@ -207,46 +206,33 @@ public final class taskManager {
      * <p>Unlike {@link #cancel(String)}, this waits outside the internal lock, so other
      * scheduling calls are not blocked while it waits.
      *
-     * @return true if the task is confirmed no longer running (already gone, cancelled, or it
-     *         finished/threw on its own); false if it was still running after {@code timeoutMs}
-     *         or the wait was interrupted.
+     * <p>This observes the entry registered when called. A name already removed by cancel(),
+     * replacement, or stop_all() has no entry to await. Call this instead of cancel() when
+     * the caller requires confirmation of that entry's body exiting.
+     *
+     * @return true if no entry was registered or the observed body has exited; false if it
+     *         still runs at the deadline, the caller is that body, or the wait is interrupted.
      */
-    public static boolean cancelAndAwait(String name, long timeoutMs) {
+    public static boolean cancel_and_await(String name, long timeoutMs) {
         if (name == null) return true;
         if (timeoutMs < 0) {
             throw new IllegalArgumentException("timeoutMs must be >= 0, got " + timeoutMs);
         }
 
-        Future<?> future;
+        Entry entry;
         synchronized (lock) {
-            Entry entry = runningTasks.remove(name);
+            entry = runningTasks.remove(name);
             if (entry == null) {
                 return true; // already gone
             }
-            future = entry.future;
             try {
                 entry.cancel();
             } catch (RuntimeException e) {
-                logError("cancelAndAwait(" + name + ") failed: " + e);
+                log_error("cancelAndAwait(" + name + ") failed: " + e);
             }
         }
 
-        if (future == null) {
-            return true; // shouldn't happen (future is set before start() returns), but be safe
-        }
-        try {
-            future.get(timeoutMs, MILLISECONDS);
-            return true; // finished before the timeout, cancellation included
-        } catch (CancellationException expected) {
-            return true; // the normal outcome of cancelling
-        } catch (ExecutionException e) {
-            return true; // task finished (by throwing) - no longer running either way
-        } catch (TimeoutException e) {
-            return false; // still running after the timeout - is it ignoring interruption?
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            return false;
-        }
+        return entry.await_stopped(timeoutMs);
     }
 
     /**
@@ -254,7 +240,7 @@ public final class taskManager {
      * running tasks to react to the interrupt and logs a warning if one doesn't. Scheduling again
      * afterwards starts a fresh worker.
      */
-    public static void stopAll() {
+    public static void stop_all() {
         ScheduledExecutorService stopped;
         WorkerThread worker;
 
@@ -277,19 +263,19 @@ public final class taskManager {
             try {
                 stopped.shutdownNow();
             } catch (RuntimeException e) {
-                logError("stopAll: shutdownNow failed: " + e);
+                log_error("stopAll: shutdownNow failed: " + e);
             }
         }
 
         // Wait outside the lock so finishing tasks are never blocked by us, and never wait for
-        // ourselves if a task calls stopAll() from the worker thread we're currently stopping.
+// ourselves if a task calls stop_all() from the worker thread we're currently stopping.
         // Compared by identity against the thread actually backing this executor (not just
         // "any WorkerThread"), so a straggler from a previous, already-shut-down executor can't
         // be mistaken for the one we just told to stop.
         if (worker != null && Thread.currentThread() == worker) return;
         try {
             if (!stopped.awaitTermination(STOP_TIMEOUT_MS, MILLISECONDS)) {
-                logError("stopAll: a task is still running after " + STOP_TIMEOUT_MS
+                log_error("stopAll: a task is still running after " + STOP_TIMEOUT_MS
                         + " ms (is it ignoring interruption?)");
             }
         } catch (InterruptedException e) {
@@ -300,39 +286,39 @@ public final class taskManager {
     // ---------------------------------------------------------------- telemetry
 
     /** Names of registered tasks, sorted. */
-    public static Set<String> getRunningTaskNames() {
+    public static Set<String> get_running_task_names() {
         return new TreeSet<>(runningTasks.keySet());
     }
 
-    public static String getTelemetry() {
+    public static String get_telemetry() {
         StringBuilder tel = new StringBuilder();
-        for (String name : getRunningTaskNames()) {
+        for (String name : get_running_task_names()) {
             if (tel.length() > 0) tel.append('\t');
             tel.append(name);
         }
         return tel.toString();
     }
 
-    /** Whether a task with this name is currently registered. Cheaper than checking {@link #getRunningTaskNames()}. */
-    public static boolean isRunning(String name) {
+/** Whether a task with this name is currently registered. Cheaper than checking {@link #get_running_task_names()}. */
+    public static boolean is_running(String name) {
         return name != null && runningTasks.containsKey(name);
     }
 
-    /** Number of currently registered tasks. Cheaper than {@code getRunningTaskNames().size()}. */
-    public static int taskCount() {
+/** Number of currently registered tasks. Cheaper than {@code get_running_task_names().size()}. */
+    public static int task_count() {
         return runningTasks.size();
     }
 
     // ---------------------------------------------------------------- internals
 
     /** Caller must hold {@link #lock}. */
-    private static ScheduledExecutorService ensureExecutor() {
+    private static ScheduledExecutorService ensure_executor() {
         if (executor == null) {
             if (!runningTasks.isEmpty()) {
-                // Should be unreachable: stopAll() clears runningTasks and nulls executor
+// Should be unreachable: stop_all() clears runningTasks and nulls executor
                 // together inside the same synchronized block. Logged rather than silently
                 // swallowed in case that invariant is ever broken by a future change.
-                logError("ensureExecutor: runningTasks had " + runningTasks.size()
+                log_error("ensureExecutor: runningTasks had " + runningTasks.size()
                         + " stale entries with no executor; clearing");
                 runningTasks.clear();
             }
@@ -351,7 +337,7 @@ public final class taskManager {
         return executor;
     }
 
-    private static void logError(String message) {
+    private static void log_error(String message) {
         log("TaskManager - " + message);
     }
 
@@ -368,6 +354,8 @@ public final class taskManager {
         final String name;
         final boolean oneShot;
         Future<?> future; // written and read only while holding lock
+        private boolean cancelled;
+        private Thread executingThread;
 
         Entry(String name, boolean oneShot) {
             this.name = name;
@@ -375,9 +363,38 @@ public final class taskManager {
         }
 
         void cancel() {
+            synchronized (this) { cancelled = true; }
             if (future != null) {
                 future.cancel(true);
             }
+        }
+
+        synchronized boolean begin() {
+            if (cancelled) return false;
+            executingThread = Thread.currentThread();
+            return true;
+        }
+
+        synchronized void end() {
+            executingThread = null;
+            notifyAll();
+        }
+
+        synchronized boolean await_stopped(long timeoutMs) {
+            if (executingThread == Thread.currentThread()) return false;
+            long start = System.nanoTime();
+            long timeoutNanos = java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(timeoutMs);
+            while (executingThread != null) {
+                long remaining = timeoutNanos - (System.nanoTime() - start);
+                if (remaining <= 0) return false;
+                try {
+                    java.util.concurrent.TimeUnit.NANOSECONDS.timedWait(this, remaining);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            return true;
         }
     }
 }
