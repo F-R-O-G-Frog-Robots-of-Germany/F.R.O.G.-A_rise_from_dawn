@@ -4,6 +4,7 @@ import com.pedropathing.math.Pose;
 
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 import org.firstinspires.ftc.teamcode.core.units.Units.Time;
+import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 
 
 public abstract class LastPositionStorage {
@@ -16,6 +17,7 @@ public abstract class LastPositionStorage {
     static Alliance currentAlliance = Alliance.RED;
 
     public static void store_data(Pose POSITION, Alliance alliance) {
+        if (alliance == null || !SensorReadings.is_valid(POSITION)) return;
         dataStored = true;
         LAST_POSITION = POSITION;
         currentAlliance = alliance;

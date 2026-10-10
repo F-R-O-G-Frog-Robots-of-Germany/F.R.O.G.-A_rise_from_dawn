@@ -9,6 +9,7 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
+import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
@@ -20,6 +21,9 @@ public final class Robot {
     private Follower follower;
     private Telemetry telemetryManager;
     private Alliance alliance;
+    private Pose targetPose;
+    private Alliance targetAlliance;
+    private boolean poseValid;
     private final Shooter shooterSubsystem = new Shooter();
     private final Intake intakeSubsystem = new Intake();
     private final FlowerIntake flowerIntakeSubsystem = new FlowerIntake();
@@ -30,6 +34,9 @@ public final class Robot {
         this.hardwareMap = hardwareMap;
         this.follower = follower;
         this.alliance = alliance;
+        targetPose = null;
+        targetAlliance = null;
+        poseValid = false;
 
         if (panelsEnabled) {
             TelemetryManager panelsTelemetry = PanelsTelemetry.INSTANCE.getTelemetry();
@@ -63,13 +70,22 @@ public final class Robot {
     /** Update mechanisms once per OpMode loop; drive localization is updated by AbstractTeleOp. */
     public void update_robot() {
         if (follower != null && alliance != null) {
-            Pose POSE = follower.pose();
-            shooterSubsystem.update(POSE.x(), POSE.y());
+            update_robot(follower.pose());
         }
     }
 
+    /** Validate each new immutable pose once; targeting consumers reuse the cached result. */
+    public void update_targeting(Pose pose) {
+        if (pose == targetPose && alliance == targetAlliance) return;
+        if (pose != targetPose) poseValid = SensorReadings.is_valid(pose);
+        targetPose = pose;
+        targetAlliance = alliance;
+        shooterSubsystem.update_target_hive(pose == null ? 0 : pose.x(), pose == null ? 0 : pose.y(), poseValid);
+    }
+
     public void update_robot(Pose pose) {
-        shooterSubsystem.update(pose.x(), pose.y());
+        update_targeting(pose);
+        shooterSubsystem.update();
     }
 
     /** Access the shooter subsystem for OpMode-specific controls. */

@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.opmodes.auto.structure;
 
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.math.Pose;
+import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 
 /**
  * Ideal, unmirrored RED field geometry for autonomous routes. Change these
@@ -30,7 +31,7 @@ public final class OptimalPoses {
         private final double ddeg;
 
         private Delta(double dx, double dy, double ddeg) {
-            if (!Double.isFinite(dx) || !Double.isFinite(dy) || !Double.isFinite(ddeg)) {
+            if (!SensorReadings.are_valid(dx, dy, ddeg)) {
                 throw new IllegalArgumentException("Hotfix values must be finite");
             }
             this.dx = dx;

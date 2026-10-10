@@ -18,25 +18,33 @@ public class Intake {
     private CachedMotor intakeMotor;
     private enum IntakeMode {OFF, FORWARD, REVERSE}
     private IntakeMode intakeMode = IntakeMode.OFF;
+    // Preserve collection intent when a full load temporarily suppresses the motor output.
+    private IntakeMode requestedIntakeMode = IntakeMode.OFF;
     int intakePow = 1;
 
     public void forward() {
-        intakeMotor.set_power(intakePow);
-        intakeMode = IntakeMode.FORWARD;
+        requestedIntakeMode = IntakeMode.FORWARD;
+        if (!shotRequested) apply_intake_output(fullLoadHeld ? IntakeMode.OFF : requestedIntakeMode);
     }
 
     public void reverse() {
-        intakeMotor.set_power(-intakePow);
-        intakeMode = IntakeMode.REVERSE;
+        requestedIntakeMode = IntakeMode.REVERSE;
+        if (!shotRequested) apply_intake_output(fullLoadHeld ? IntakeMode.OFF : requestedIntakeMode);
     }
 
     public void off() {
-        if (intakeMotor != null) intakeMotor.set_power(0);
-        intakeMode = IntakeMode.OFF;
+        requestedIntakeMode = IntakeMode.OFF;
+        apply_intake_output(IntakeMode.OFF);
+    }
+
+    private void apply_intake_output(IntakeMode mode) {
+        if (intakeMotor != null) intakeMotor.set_power(mode == IntakeMode.FORWARD ? intakePow
+                : mode == IntakeMode.REVERSE ? -intakePow : 0);
+        intakeMode = mode;
     }
 
     public void toggle_forward() {
-        if (intakeMode != IntakeMode.FORWARD) {
+        if (requestedIntakeMode != IntakeMode.FORWARD) {
             forward();
         } else {
             off();
@@ -44,16 +52,16 @@ public class Intake {
     }
 
     public void toggle_reverse() {
-        if (intakeMode != IntakeMode.REVERSE) {
+        if (requestedIntakeMode != IntakeMode.REVERSE) {
             reverse();
         } else {
             off();
         }
     }
     public void toggle_forward_reverse(){
-        if(intakeMode == IntakeMode.FORWARD){
+        if(requestedIntakeMode == IntakeMode.FORWARD){
             reverse();
-        } else if (intakeMode == IntakeMode.REVERSE) {
+        } else if (requestedIntakeMode == IntakeMode.REVERSE) {
             forward();
         }
         else{
@@ -64,7 +72,7 @@ public class Intake {
     }
 
     public double get_intake_power() {
-        return intakeMotor.raw().getPower();
+        return intakeMotor.get_power();
     }
 
     public IntakeMode get_intake_mode() {
@@ -116,7 +124,7 @@ public class Intake {
         }
     }
     public double get_transfer_power() {
-        return transferMotor.raw().getPower();
+        return transferMotor.get_power();
     }
 
     public TransferMode get_transfer_mode() {
@@ -127,8 +135,8 @@ public class Intake {
     private static final long SENSOR_READ_INTERVAL_NANOS = 300_000_000L;
     private ColorRangeSensor colorSensorLow;
     private ColorRangeSensor colorSensorHigh;
-    private double cachedUpperDistanceMm;
-    private double cachedLowerDistanceMm;
+    private final SensorReadings.Sample upperDistance = new SensorReadings.Sample();
+    private final SensorReadings.Sample lowerDistance = new SensorReadings.Sample();
     private long lastSensorReadNanos;
     private boolean sensorReadingsInitialized;
     private static final Units.Length EMPTY_UPPER_DISTANCE = mm(0); // tune pls, placeholder value
@@ -137,10 +145,8 @@ public class Intake {
     private synchronized void refresh_sensor_readings() {
         long now = System.nanoTime();
         if (!sensorReadingsInitialized || now - lastSensorReadNanos >= SENSOR_READ_INTERVAL_NANOS) {
-            double lowerDistanceMm = colorSensorLow.getDistance(DistanceUnit.MM);
-            double upperDistanceMm = colorSensorHigh.getDistance(DistanceUnit.MM);
-            cachedLowerDistanceMm = lowerDistanceMm;
-            cachedUpperDistanceMm = upperDistanceMm;
+            lowerDistance.update(colorSensorLow.getDistance(DistanceUnit.MM));
+            upperDistance.update(colorSensorHigh.getDistance(DistanceUnit.MM));
             lastSensorReadNanos = now;
             sensorReadingsInitialized = true;
         }
@@ -148,37 +154,50 @@ public class Intake {
 
     public synchronized Units.Length get_upper_distance() {
         refresh_sensor_readings();
-        return mm(cachedUpperDistanceMm);
+        return mm(upperDistance.get_value());
     }
 
     public synchronized Units.Length get_lower_distance() {
         refresh_sensor_readings();
-        return mm(cachedLowerDistanceMm);
+        return mm(lowerDistance.get_value());
     }
 
     public synchronized boolean loaded() {
         refresh_sensor_readings();
-        return SensorReadings.is_valid(cachedLowerDistanceMm)
-                && SensorReadings.is_valid(cachedUpperDistanceMm)
-                && cachedLowerDistanceMm < EMPTY_LOWER_DISTANCE.mm()
-                && cachedUpperDistanceMm < EMPTY_UPPER_DISTANCE.mm();
+        return lowerDistance.is_valid() && upperDistance.is_valid()
+                && lowerDistance.get_value() < EMPTY_LOWER_DISTANCE.mm()
+                && upperDistance.get_value() < EMPTY_UPPER_DISTANCE.mm();
+    }
+
+    public synchronized boolean sensor_readings_valid() {
+        refresh_sensor_readings();
+        return lowerDistance.is_valid() && upperDistance.is_valid();
     }
 
     public synchronized String get_sensor_telemetry() {
-        return get_lower_distance() + "\t" + get_upper_distance() + "\t" + loaded();
+        return get_lower_distance() + "\t" + get_upper_distance() + "\t" + loaded()
+                + "\tvalid: " + sensor_readings_valid();
     }
 
     // Combined subsystem operations
     private enum ScoringMode {COLLECT, SHOOT}
     private ScoringMode scoringMode = ScoringMode.COLLECT;
     private boolean shotRequested;
+    // Pollen cannot leave a full robot before feeding starts; a sensor dropout must not restart collection.
+    private boolean fullLoadHeld;
+
+    public boolean full_load_held() { return fullLoadHeld; }
 
     public void init(HardwareMap hardwareMap) { // tune directions of motors
         intakeMode = IntakeMode.OFF;
+        requestedIntakeMode = IntakeMode.OFF;
+        fullLoadHeld = false;
         transferMode = TransferMode.OFF;
         scoringMode = ScoringMode.COLLECT;
         shotRequested = false;
         sensorReadingsInitialized = false;
+        lowerDistance.reset();
+        upperDistance.reset();
         DcMotorEx rawIntakeMotor = hardwareMap.get(DcMotorEx.class, "intakeMotor");
         intakeMotor = new CachedMotor(rawIntakeMotor, 0.01);
         intakeMotor.set_power(0);
@@ -201,40 +220,54 @@ public class Intake {
     public void request_shot() { shotRequested = true; }
 
     public void stop_feed() {
+        // Do not reuse a pre-shot full sample after pollen may have left the robot.
+        if (transferMode == TransferMode.FORWARD) sensorReadingsInitialized = false;
         shotRequested = false;
         off();
         transfer_off();
     }
 
     public void stop() {
+        fullLoadHeld = false;
+        sensorReadingsInitialized = false;
         scoringMode = ScoringMode.COLLECT;
         shotRequested = false;
         off();
         transfer_off();
     }
 
+    /** SHOOT mode means preparation, not immediate transfer. A held shot keeps priority over mode edits. */
     public void set_scoring_mode(ScoringMode mode) {
         scoringMode = mode;
-        shotRequested = false;
-        if (mode == ScoringMode.COLLECT) forward();
-        else off();
-        transfer_off();
+        requestedIntakeMode = mode == ScoringMode.COLLECT ? IntakeMode.FORWARD : IntakeMode.OFF;
+        if (!shotRequested) {
+            apply_intake_output(fullLoadHeld ? IntakeMode.OFF : requestedIntakeMode);
+            transfer_off();
+        }
     }
     public void collect() { set_scoring_mode(ScoringMode.COLLECT); }
     public boolean is_scoring_requested() { return scoringMode == ScoringMode.SHOOT; }
     public boolean is_shooting_requested() { return shotRequested; }
 
-    /** Feed only for an explicit shot request and a ready shooter sample. */
-    public void update_feed(boolean ready) {
+    /** Compatibility entry point; Shooter passes its single loaded result through the overload below. */
+    public void update_feed(boolean feedAllowed) {
+        update_feed(feedAllowed, !is_shooting_requested() && loaded());
+    }
+
+    /** Shooter owns the shot latch; readiness is required to start feeding, not to continue it. */
+    public void update_feed(boolean feedAllowed, boolean loaded) {
         if (is_shooting_requested()) {
-            if (ready) {
-                forward();
+            if (feedAllowed) {
+                fullLoadHeld = false;
+                apply_intake_output(IntakeMode.FORWARD);
                 transfer_forward();
             } else {
-                off();
+                apply_intake_output(IntakeMode.OFF);
                 transfer_off();
             }
         } else {
+            if (loaded) fullLoadHeld = true;
+            apply_intake_output(fullLoadHeld ? IntakeMode.OFF : requestedIntakeMode);
             transfer_off();
         }
     }

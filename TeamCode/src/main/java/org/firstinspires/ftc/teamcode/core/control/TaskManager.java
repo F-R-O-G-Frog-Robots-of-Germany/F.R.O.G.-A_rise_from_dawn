@@ -5,6 +5,7 @@ import static org.firstinspires.ftc.teamcode.core.control.LogManager.log;
 import static java.util.concurrent.TimeUnit.MILLISECONDS;
 
 import org.firstinspires.ftc.teamcode.core.units.Units.Time;
+import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 
 import java.util.Set;
 import java.util.TreeSet;
@@ -114,7 +115,7 @@ public final class TaskManager {
             throw new IllegalArgumentException(what + " must not be null");
         }
         double ms = TIME.ms();
-        if (Double.isNaN(ms) || Double.isInfinite(ms)) {
+        if (!SensorReadings.is_valid(ms)) {
             throw new IllegalArgumentException(what + " must be finite, got " + ms + " ms");
         }
         if (ms < minMs) {

@@ -6,22 +6,27 @@ import com.qualcomm.robotcore.hardware.Servo;
 public final class CachedServo {
     private final Servo servo;
     private final double eps;
-    private double last = Double.NaN;
+    private double last;
+    private boolean initialized;
 
     public CachedServo(Servo servo, double eps) {
         this.servo = servo;
         this.eps = eps;
     }
 
-    public synchronized void set_position(double pos) {
-        if (Double.isNaN(last) || Math.abs(pos - last) >= eps) {
+    public synchronized boolean set_position(double pos) {
+        if (!SensorReadings.is_valid(pos)) return false;
+        pos = Math.max(0, Math.min(1, pos));
+        if (!initialized || Math.abs(pos - last) >= eps) {
             servo.setPosition(pos);
             last = pos;
+            initialized = true;
         }
+        return true;
     }
 
     public synchronized void invalidate() {
-        last = Double.NaN;
+        initialized = false;
     }
 
     public Servo raw() {

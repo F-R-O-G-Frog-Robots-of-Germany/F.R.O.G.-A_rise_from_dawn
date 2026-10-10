@@ -12,6 +12,7 @@ import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.control.LoopTiming;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
 import org.firstinspires.ftc.teamcode.core.control.TaskManager;
+import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.core.pedro.PoseMirroring;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
@@ -213,7 +214,7 @@ abstract class General extends LinearOpMode {
     private void update_follower_and_telemetry() {
         follower.update();
         Pose pose = follower.pose();
-        shooterSubsystem.update(pose.x(), pose.y());
+        shooterSubsystem.update(pose.x(), pose.y(), SensorReadings.is_valid(pose));
         loopTiming.end_work();
         if (CompConfig.loop_time_telemetry_enabled()) {
             telemetry.addData("Work ms", loopTiming.work_ms());
@@ -238,11 +239,11 @@ abstract class General extends LinearOpMode {
     }
 
     private static void require_positive(double value, String name) {
-        if (!Double.isFinite(value) || value <= 0) throw new IllegalArgumentException(name + " must be finite and > 0");
+        if (!SensorReadings.is_valid(value) || value <= 0) throw new IllegalArgumentException(name + " must be finite and > 0");
     }
 
     private static void require_non_negative(double value, String name) {
-        if (!Double.isFinite(value) || value < 0) throw new IllegalArgumentException(name + " must be finite and >= 0");
+        if (!SensorReadings.is_valid(value) || value < 0) throw new IllegalArgumentException(name + " must be finite and >= 0");
     }
 
     protected final Pose field_pose(Pose redPose) {
