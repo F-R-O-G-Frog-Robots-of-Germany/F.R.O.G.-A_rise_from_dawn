@@ -1,0 +1,18 @@
+BEFORE
+interactive
+408000
+1512000
+cpu:95
+cpu:1
+54.46 144.51
+AFTER
+scaling_governor
+performance
+scaling_min_freq
+1512000
+scaling_max_freq
+1512000
+cpuinfo_cur_freq
+1512000
+cpu:95
+cpu:1

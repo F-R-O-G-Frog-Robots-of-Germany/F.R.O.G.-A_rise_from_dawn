@@ -3,8 +3,10 @@
 Welcome!
 
 This module, TeamCode, is the place where you will write/paste the code for your team's
-robot controller App. This module is currently empty (a clean slate) but the
-process for adding OpModes is straightforward.
+robot controller App. It contains competition TeleOp, nine autonomous routes with
+RED/BLUE entries, subsystems, input utilities and tuning OpModes. Current controls,
+review decisions and remaining work are documented in `Competition-Readiness-Changes.md`
+at the repository root. The sample-copying instructions below remain useful for new OpModes.
 
 ## Creating your own OpModes
 

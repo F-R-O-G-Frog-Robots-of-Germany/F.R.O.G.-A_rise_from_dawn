@@ -1,0 +1,55 @@
+test=SHA1 zero stream
+sizeMiB=64
+runs=5
+model=Control Hub v1.0
+android=7.1.2
+fingerprint=FIRST/ch_v1_box/rk3328_box:7.1.2/NHG47K/rev05081324:userdebug/release-keys
+kernel=3.10.245
+identity=uid=2000(shell) gid=2000(shell) groups=2000(shell),1004(input),1007(log),1011(adb),1015(sdcard_rw),1028(sdcard_r),3001(net_bt_admin),3002(net_bt),3003(inet),3006(net_bw_stats),3009(readproc) context=u:r:shell:s0
+toybox=-a777abe3f668-android
+governor=performance
+requestedFrequencyBeforeKHz=1512000
+temperatureBeforeRaw=63333
+warmup=1
+
+RUN 1
+44fac4bedde4df04b9572ac665d3ac2c5cd00c7d  -
+real     4.05
+user     3.67
+sys      0.26
+requestedFrequencyAfterRunKHz=1512000
+temperatureAfterRunRaw=61666
+
+RUN 2
+44fac4bedde4df04b9572ac665d3ac2c5cd00c7d  -
+real     4.00
+user     3.69
+sys      0.23
+requestedFrequencyAfterRunKHz=1512000
+temperatureAfterRunRaw=61666
+
+RUN 3
+44fac4bedde4df04b9572ac665d3ac2c5cd00c7d  -
+real     4.09
+user     3.74
+sys      0.24
+requestedFrequencyAfterRunKHz=1512000
+temperatureAfterRunRaw=61250
+
+RUN 4
+44fac4bedde4df04b9572ac665d3ac2c5cd00c7d  -
+real     3.99
+user     3.69
+sys      0.23
+requestedFrequencyAfterRunKHz=1512000
+temperatureAfterRunRaw=64166
+
+RUN 5
+44fac4bedde4df04b9572ac665d3ac2c5cd00c7d  -
+real     4.00
+user     3.64
+sys      0.27
+requestedFrequencyAfterRunKHz=1512000
+temperatureAfterRunRaw=61250
+
+BENCHMARK COMPLETE

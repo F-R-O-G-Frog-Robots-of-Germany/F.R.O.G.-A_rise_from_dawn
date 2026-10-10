@@ -1,0 +1,32 @@
+{
+  "hub": "A",
+  "serial": "b7b1bc5d1dc1e74a",
+  "capturedHost": "2026-10-09T14:26:15.8897831+02:00",
+  "workload": "SHA1 zero stream",
+  "sizeMiB": 64,
+  "warmupRuns": 1,
+  "measuredRuns": 5,
+  "realSeconds": [
+    4.02,
+    4.1,
+    4.11,
+    4.02,
+    4.11
+  ],
+  "medianSeconds": 4.1,
+  "throughputMiBPerSecond": 15.609756097560977,
+  "score": 15609.756097560978,
+  "scoreFormula": "1000 * sizeMiB / medianSeconds",
+  "checksum": "44fac4bedde4df04b9572ac665d3ac2c5cd00c7d",
+  "checksumVerified": true,
+  "startTemperatureC": 62.083,
+  "endTemperatureC": 65,
+  "maxSampledTemperatureC": 65.384,
+  "governor": "performance",
+  "minFrequencyKHz": 1512000,
+  "maxFrequencyKHz": 1512000,
+  "thermalTargetDuringBenchmarkC": 85,
+  "thermalTargetFinalC": 95,
+  "thermalEnabled": true,
+  "note": "Original target 95 restored after user correction. All sampled temperatures below 85. Hub B pending."
+}

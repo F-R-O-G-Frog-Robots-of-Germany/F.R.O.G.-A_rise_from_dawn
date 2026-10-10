@@ -1,0 +1,19 @@
+Host captured: 2026-10-09T14:24:48.3926186+02:00 Serial: b7b1bc5d1dc1e74a
+uid=0(root) gid=0(root) groups=0(root),1004(input),1007(log),1011(adb),1015(sdcard_rw),1028(sdcard_r),3001(net_bt_admin),3002(net_bt),3003(inet),3006(net_bw_stats),3009(readproc) context=u:r:su:s0
+scaling_governor
+interactive
+scaling_min_freq
+408000
+scaling_max_freq
+1512000
+cpuinfo_cur_freq
+600000
+cpu_temp_target
+cpu:95
+cpu_temp_enable
+cpu:1
+temperatureRaw
+54583
+uptime
+221.74 737.74
+FIRST/ch_v1_box/rk3328_box:7.1.2/NHG47K/rev05081324:userdebug/release-keys
