@@ -53,11 +53,8 @@ public final class Butine {
         public double remainingS = 30.0;
         public double scoreOverheadS = 2.0;
         public int candidateCap = 25;
-        /** Fast defaults; source's fuller search uses 45 ms, 20000 iterations, 40 stagnation. */
-        public double computeBudgetMs = 15.0;
         public int iterationCap = 64;
         public int stagnationLimit = 8;
-        /** Bounds each local search as well as the overall wall-clock budget. */
         public int localSearchPasses = 4;
         public int exactOrderLimit = EXACT_ORDER_LIMIT;
         public double minConfidence = 0.0;
@@ -73,7 +70,6 @@ public final class Butine {
             remainingS = source.remainingS;
             scoreOverheadS = source.scoreOverheadS;
             candidateCap = source.candidateCap;
-            computeBudgetMs = source.computeBudgetMs;
             iterationCap = source.iterationCap;
             stagnationLimit = source.stagnationLimit;
             localSearchPasses = source.localSearchPasses;
@@ -124,7 +120,6 @@ public final class Butine {
         public final int candidatesConsidered;
         public final double solveUs;
         public final int iterations;
-        public final boolean budgetExhausted;
         public final boolean uncapacitated;
 
         private Plan(Context ctx, Run[] runs, int fittingRuns, int expectedCollected,
@@ -140,7 +135,6 @@ public final class Butine {
             candidatesConsidered = ctx.count;
             solveUs = (System.nanoTime() - ctx.startedNs) / 1000.0;
             this.iterations = iterations;
-            budgetExhausted = ctx.budgetExhausted;
             this.uncapacitated = uncapacitated;
         }
     }
@@ -256,24 +250,21 @@ public final class Butine {
         int[] tour = new int[ctx.count];
         build_giant_tour(ctx, tour);
         double travelBudget = Math.max(0, settings.remainingS - overhead);
-        // Produce a bounded usable answer before spending time on optional search.
         Solution best = uncapacitated
                 ? build_uncapacitated(tour, ctx, travelBudget, gamma, overhead)
                 : greedy_split(tour, ctx, capacity, horizon, gamma, overhead);
         int[] bestTour = tour.clone();
-        if (ctx.may_search()) {
-            optimize_sequence(tour, tour.length, ctx, true);
-            Solution candidate = construct(tour, ctx, capacity, horizon, gamma, overhead, travelBudget, uncapacitated);
-            if (better(candidate, best, uncapacitated)) {
-                best = candidate;
-                System.arraycopy(tour, 0, bestTour, 0, tour.length);
-            }
+        optimize_sequence(tour, tour.length, ctx, true);
+        Solution initialCandidate = construct(tour, ctx, capacity, horizon, gamma, overhead, travelBudget, uncapacitated);
+        if (better(initialCandidate, best, uncapacitated)) {
+            best = initialCandidate;
+            System.arraycopy(tour, 0, bestTour, 0, tour.length);
         }
         Rng rng = new Rng(settings.seed);
         int iterations = 0;
         int stagnation = 0;
         while (iterations < Math.max(0, settings.iterationCap)
-                && stagnation < Math.max(1, settings.stagnationLimit) && ctx.may_search()) {
+                && stagnation < Math.max(1, settings.stagnationLimit)) {
             ++iterations;
             System.arraycopy(bestTour, 0, tour, 0, tour.length);
             double_bridge(tour, rng);
@@ -328,7 +319,7 @@ public final class Butine {
     }
 
     private static void validate(Params p) {
-        double[] finite = {p.discount, p.remainingS, p.scoreOverheadS, p.computeBudgetMs, p.minConfidence};
+        double[] finite = {p.discount, p.remainingS, p.scoreOverheadS, p.minConfidence};
         for (double value : finite) if (!Double.isFinite(value)) throw new IllegalArgumentException("Nonfinite planner setting");
         validate_kinematics(p.kinematics);
     }
@@ -357,7 +348,6 @@ public final class Butine {
         final Params params;
         final Kinematics k;
         final long startedNs = System.nanoTime();
-        final long budgetNs;
         final VisionPose[] poses = new VisionPose[MAX_CANDIDATES];
         final int[] ids = new int[MAX_CANDIDATES];
         final double[] reach = new double[MAX_CANDIDATES];
@@ -365,20 +355,12 @@ public final class Butine {
         final double[][] direction = new double[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
         final boolean[][] degenerate = new boolean[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
         int count;
-        boolean budgetExhausted;
 
         Context(VisionPose start, VisionPose depot, Params params) {
             this.start = start;
             this.depot = depot;
             this.params = params;
             k = params.kinematics;
-            budgetNs = (long) Math.min(Long.MAX_VALUE, Math.max(0, params.computeBudgetMs) * 1e6);
-        }
-
-        boolean may_search() {
-            if (System.nanoTime() - startedNs < budgetNs) return true;
-            budgetExhausted = true;
-            return false;
         }
 
         VisionPose node(int index) { return index == 0 ? depot : index == count + 1 ? start : poses[index - 1]; }
@@ -454,13 +436,12 @@ public final class Butine {
         }
     }
 
-    /** Exact short-run permutations, with current order retained when the budget expires. */
+    /** Exact short-run permutations. */
     private static double optimize_run(int[] members, int length, Context ctx, boolean first) {
         if (length <= 1) return sequence_time(members, length, ctx, first);
         int exactLimit = clamp(ctx.params.exactOrderLimit, 0, EXACT_ORDER_LIMIT);
         if (length > exactLimit) return optimize_sequence(members, length, ctx, first);
         double best = sequence_time(members, length, ctx, first);
-        if (!ctx.may_search()) return best;
         int[] trial = Arrays.copyOf(members, length);
         int[] bestOrder = Arrays.copyOf(members, length);
         Arrays.sort(trial);
@@ -470,7 +451,6 @@ public final class Butine {
                 best = cost;
                 System.arraycopy(trial, 0, bestOrder, 0, length);
             }
-            if (!ctx.may_search()) break;
         } while (next_permutation(trial));
         System.arraycopy(bestOrder, 0, members, 0, length);
         return best;
@@ -490,14 +470,13 @@ public final class Butine {
     /** 2-opt and Or-opt (1..3 members, either orientation) with a bounded pass count. */
     private static double optimize_sequence(int[] members, int length, Context ctx, boolean first) {
         double best = sequence_time(members, length, ctx, first);
-        if (length < 3 || !ctx.may_search()) return best;
+        if (length < 3) return best;
         int[] trial = new int[length];
         int[] remainder = new int[length];
         for (int pass = 0; pass < Math.max(0, ctx.params.localSearchPasses); ++pass) {
             boolean improved = false;
             for (int a = 0; a < length - 1; ++a) {
                 for (int b = a + 1; b < length; ++b) {
-                    if (!ctx.may_search()) return best;
                     reverse(members, a, b);
                     double cost = sequence_time(members, length, ctx, first);
                     if (cost < best - EPSILON) { best = cost; improved = true; }
@@ -508,7 +487,6 @@ public final class Butine {
                 for (int start = 0; start + span <= length; ++start) {
                     for (int flip = 0; flip <= 1; ++flip) {
                         for (int insert = 0; insert + span <= length; ++insert) {
-                            if (!ctx.may_search()) return best;
                             if (insert == start && flip == 0) continue;
                             int write = 0;
                             for (int m = 0; m < length; ++m)
@@ -663,7 +641,6 @@ public final class Butine {
         for (int j = 0; j < ctx.count; ++j) {
             for (int r = 0; r <= horizon; ++r) {
                 if (collected[j][r] < 0) continue;
-                if (!ctx.may_search()) return fallback;
                 if (better_value(collected[j][r], front[j][r], cost[j][r],
                         collected[j + 1][r], front[j + 1][r], cost[j + 1][r])) {
                     collected[j + 1][r] = collected[j][r];
@@ -720,7 +697,7 @@ public final class Butine {
                                       double[] gamma, double overhead, double budget, boolean uncapacitated) {
         if (uncapacitated) return build_uncapacitated(tour, ctx, budget, gamma, overhead);
         Solution s = split_tour(tour, ctx, capacity, horizon, gamma, overhead);
-        if (s.valid && ctx.may_search()) polish_solution(s, ctx, capacity, gamma);
+        if (s.valid) polish_solution(s, ctx, capacity, gamma);
         return s;
     }
 
@@ -741,7 +718,6 @@ public final class Butine {
                     double frontDelta = front_load_weight(b, s.horizon, capacity) - front_load_weight(a, s.horizon, capacity);
                     if (frontDelta < -EPSILON) continue;
                     for (int i = 0; i < s.length[a]; ++i) {
-                        if (!ctx.may_search()) return;
                         int write = 0;
                         for (int m = 0; m < s.length[a]; ++m) if (m != i) trialA[write++] = s.members[a][m];
                         System.arraycopy(s.members[b], 0, trialB, 0, s.length[b]);
@@ -764,7 +740,6 @@ public final class Butine {
                 for (int b = a + 1; b < s.count; ++b) {
                     for (int i = 0; i < s.length[a]; ++i) {
                         for (int j = 0; j < s.length[b]; ++j) {
-                            if (!ctx.may_search()) return;
                             System.arraycopy(s.members[a], 0, trialA, 0, s.length[a]);
                             System.arraycopy(s.members[b], 0, trialB, 0, s.length[b]);
                             int value = trialA[i]; trialA[i] = trialB[j]; trialB[j] = value;
@@ -782,7 +757,6 @@ public final class Butine {
                 }
                 for (int i = 0; i < s.length[a]; ++i) {
                     for (int u = 0; u < spareCount; ++u) {
-                        if (!ctx.may_search()) return;
                         System.arraycopy(s.members[a], 0, trialA, 0, s.length[a]);
                         trialA[i] = spare[u];
                         double seconds = optimize_run(trialA, s.length[a], ctx, a == 0);
@@ -839,9 +813,9 @@ public final class Butine {
         }
         int[] trial = new int[MAX_RUN_LEN];
         boolean added = true;
-        while (added && length < MAX_RUN_LEN && ctx.may_search()) {
+        while (added && length < MAX_RUN_LEN) {
             added = false;
-            for (int c = 0; c < ctx.count && ctx.may_search(); ++c) {
+            for (int c = 0; c < ctx.count; ++c) {
                 if (!dropped[c]) continue;
                 System.arraycopy(s.members[0], 0, trial, 0, length);
                 trial[length] = c;
@@ -859,7 +833,7 @@ public final class Butine {
         return s;
     }
 
-    /** Deadline fitting is mandatory and bounded even when optional search has exhausted its budget. */
+    /** Trim runs to the remaining match time. */
     private static Plan fit_deadline(Solution best, Context ctx, double overhead, int iterations, boolean uncapacitated) {
         if (!best.valid) return new Plan(ctx, new Run[0], 0, 0, 0, 0, iterations, uncapacitated);
         double objective = best.objective;

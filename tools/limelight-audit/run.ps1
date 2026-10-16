@@ -28,11 +28,11 @@ $taskClasspath += $taskPedro.FullName
 $taskCp = $taskClasspath -join ';'
 $taskPackage = Join-Path $taskRepo 'TeamCode\src\main\java\org\firstinspires\ftc\teamcode\limelight'
 $taskSources = @(Get-ChildItem -LiteralPath $taskPackage -Filter '*.java' -File)
-$taskTests = @(Get-ChildItem -LiteralPath (Join-Path $taskRepo 'TeamCode\src\test\java\org\firstinspires\ftc\teamcode\limelight') -Filter '*.java' -File)
+$taskTests = @(Get-ChildItem -LiteralPath (Join-Path $taskRepo 'tests\java\org\firstinspires\ftc\teamcode\limelight') -Filter '*.java' -File)
 # Compile production code against real SDK signatures first. Fixtures never establish SDK compatibility.
 & javac -source 8 -target 8 -proc:none -classpath $taskCp -d $taskReal @($taskSources.FullName) @($taskTests.FullName)
 if ($LASTEXITCODE -ne 0) { throw 'Real SDK compilation failed.' }
-foreach ($taskTest in @('ButineRegression', 'PlannerAuditChecks', 'VisionChecks', 'VisionAuditChecks', 'RunnerChecks', 'RunnerAuditChecks')) {
+foreach ($taskTest in @('ButineRegression', 'PlannerAuditChecks', 'VisionChecks', 'VisionAuditChecks', 'RunnerChecks', 'RunnerAuditChecks', 'CpuUtilityChecks', 'ButineWorkerChecks', 'AsyncRunnerChecks')) {
     & java -cp ($taskReal + ';' + $taskCp) ('org.firstinspires.ftc.teamcode.limelight.' + $taskTest)
     if ($LASTEXITCODE -ne 0) { throw "$taskTest failed." }
 }
@@ -40,7 +40,7 @@ foreach ($taskTest in @('ButineRegression', 'PlannerAuditChecks', 'VisionChecks'
 $taskFixtures = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'fixtures') -Filter '*.java' -Recurse -File)
 & javac -source 8 -target 8 -proc:none -classpath $taskCp -d $taskFake @($taskSources.FullName) @($taskFixtures.FullName)
 if ($LASTEXITCODE -ne 0) { throw 'Camera fixture compilation failed.' }
-foreach ($taskTest in @('CameraFrameAudit', 'CameraRunnerAudit')) {
+foreach ($taskTest in @('CameraFrameAudit', 'CameraRunnerAudit', 'LimelightWorkerAudit')) {
     & java -cp ($taskFake + ';' + $taskCp) $taskTest
     if ($LASTEXITCODE -ne 0) { throw "$taskTest failed." }
 }

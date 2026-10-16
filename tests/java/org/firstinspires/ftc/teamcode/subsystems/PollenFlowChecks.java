@@ -269,7 +269,8 @@ public final class PollenFlowChecks {
         Rig() throws Exception {
             set(intake, Intake.class, "intakeMotor", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.01));
             set(intake, Intake.class, "transferMotor", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.01));
-            set(shooter, Shooter.class, "shooterMotor", new CachedMotor(motor(velocity, flywheelPower, flywheelWrites), 0.002));
+            set(shooter, Shooter.class, "shooterMotorLeft", new CachedMotor(motor(velocity, flywheelPower, flywheelWrites), 0.002));
+            set(shooter, Shooter.class, "shooterMotorRight", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.002));
             set(shooter, Shooter.class, "servoHood", new CachedServo((Servo) Proxy.newProxyInstance(
                     Servo.class.getClassLoader(), new Class<?>[]{Servo.class}, (p, m, a) -> {
                         if (m.getName().equals("setPosition")) hoodWrites[0]++;

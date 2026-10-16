@@ -48,7 +48,8 @@ public final class RunnerChecks {
         Butine.Params params = new Butine.Params();
         params.capacity = 1;
         params.lookaheadRuns = 1;
-        params.computeBudgetMs = 1000;
+        params.iterationCap = 0;
+        params.localSearchPasses = 0;
         return params;
     }
 

@@ -87,7 +87,7 @@ public final class PollenMap {
         this.config = config;
     }
 
-    public void init() {
+    public synchronized void init() {
         clear();
         lastFrameSequence = 0;
         frameSequenceValid = false;
@@ -96,19 +96,25 @@ public final class PollenMap {
         created = replaced = rejected = 0;
     }
 
-    public void clear() { tracks.clear(); }
+    public synchronized void clear() { tracks.clear(); }
 
     public void update() { update(camera); }
 
     public void update(Limelight camera) {
         if (camera != null && camera.has_pollen_frame()) {
-            activeCalibration = camera.calibration;
-            update(camera.get_pollen(), camera.pollen_frame_pose(), camera.pollen_frame_sequence());
+            // These access immutable cached fields only; never put camera SDK I/O under this lock.
+            List<Pollen> frame = camera.get_pollen();
+            VisionPose pose = camera.pollen_frame_pose();
+            long sequence = camera.pollen_frame_sequence();
+            synchronized (this) {
+                activeCalibration = camera.calibration;
+                update(frame, pose, sequence);
+            }
         }
     }
 
     /** A missing frame, invalid pose, or repeated sequence never supplies negative evidence. */
-    public void update(List<Pollen> frame, VisionPose capturePose, long sequence) {
+    public synchronized void update(List<Pollen> frame, VisionPose capturePose, long sequence) {
         if (sequence <= 0 || frame == null || capturePose == null || !capturePose.is_finite()
                 || !valid_config()) return;
         if (frameSequenceValid && sequence <= lastFrameSequence) {
@@ -180,7 +186,7 @@ public final class PollenMap {
         }
     }
 
-    public boolean remove(int id) {
+    public synchronized boolean remove(int id) {
         for (Iterator<Track> iterator = tracks.iterator(); iterator.hasNext();) {
             if (iterator.next().id == id) {
                 iterator.remove();
@@ -190,7 +196,7 @@ public final class PollenMap {
         return false;
     }
 
-    public int mark_collected(double x, double y, double radiusIn) {
+    public synchronized int mark_collected(double x, double y, double radiusIn) {
         if (!Double.isFinite(x) || !Double.isFinite(y)
                 || !Double.isFinite(radiusIn) || radiusIn < 0) return 0;
         int count = 0;
@@ -204,15 +210,17 @@ public final class PollenMap {
         return count;
     }
 
-    public List<Track> tracks() {
+    public synchronized List<Track> tracks() {
         return Collections.unmodifiableList(new ArrayList<>(tracks));
     }
 
-    public Stats stats() {
+    public synchronized int size() { return tracks.size(); }
+
+    public synchronized Stats stats() {
         return new Stats(framesProcessed, framesSkipped, created, replaced, rejected);
     }
 
-    public List<Pollen> snapshot() {
+    public synchronized List<Pollen> snapshot() {
         ArrayList<Pollen> snapshot = new ArrayList<>(tracks.size());
         for (Track track : tracks) {
             snapshot.add(new Pollen(track.id, track.position, track.confidence, track.area,
@@ -221,9 +229,9 @@ public final class PollenMap {
         return snapshot;
     }
 
-    public int inject(VisionPose position) { return inject(position, 1.0, 1.0); }
+    public synchronized int inject(VisionPose position) { return inject(position, 1.0, 1.0); }
 
-    public int inject(VisionPose position, double confidence, double area) {
+    public synchronized int inject(VisionPose position, double confidence, double area) {
         if (!valid_config() || !plausible(position) || !Double.isFinite(confidence)
                 || confidence < 0 || confidence > 1 || !Double.isFinite(area) || area < 0) {
             rejected++;
@@ -237,7 +245,7 @@ public final class PollenMap {
         return id;
     }
 
-    public boolean in_frustum(VisionPose robot, VisionPose target) {
+    public synchronized boolean in_frustum(VisionPose robot, VisionPose target) {
         if (robot == null || target == null || !robot.is_finite() || !target.is_finite()
                 || !valid_config()) return false;
         double cos = Math.cos(robot.heading);

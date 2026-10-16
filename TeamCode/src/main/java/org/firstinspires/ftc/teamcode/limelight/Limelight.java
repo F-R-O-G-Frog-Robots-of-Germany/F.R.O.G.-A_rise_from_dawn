@@ -160,17 +160,31 @@ public final class Limelight {
 
     /** Call every robot loop to feed the capture-time pose history. */
     public void update(VisionPose pose) {
-        long now = VisionPose.now_ms();
-        if (pose != null && pose.is_finite()) {
+        long stamp = VisionPose.now_ms();
+        record_pose(stamp, pose);
+        read_result(pose, stamp, Long.MAX_VALUE);
+    }
+
+    /** Worker-only ingestion: timestamps remain those of the robot loop, even after slow I/O. */
+    void record_pose(long stamp, VisionPose pose) {
+        if (stamp >= 0 && pose != null && pose.is_finite()) {
             currentPose = pose;
-            push_pose(now, pose);
+            push_pose(stamp, pose);
         }
+    }
+
+    /** Never create detector negative evidence from odometry older than 100 ms. */
+    void update_sampled(VisionPose pose, long stamp) { read_result(pose, stamp, 100); }
+
+    private void read_result(VisionPose pose, long poseStamp, long maxPoseAgeMs) {
+        long now = VisionPose.now_ms();
         if (device == null) {
             lastResult = empty_result();
             return;
         }
         try {
             LLResult result = device.getLatestResult();
+            now = VisionPose.now_ms();
             if (result == null) {
                 lastResult = empty_result();
                 return;
@@ -222,7 +236,8 @@ public final class Limelight {
                     parseLatency, temperature, cpu, fps, actualPipeline, result.getTimestamp(), age);
             if (!fresh || !correctPipeline || selectedPipeline != DETECTOR_PIPELINE) return;
             // Invalid localization must not sweep a wedge at an invented robot pose.
-            if (pose == null || !pose.is_finite()) return;
+            if (pose == null || !pose.is_finite() || poseStamp < 0
+                    || now < poseStamp || now - poseStamp > maxPoseAgeMs) return;
             double timestamp = result.getTimestamp();
             if (Double.isFinite(timestamp) && timestamp > 0 && lastFrameTimestamp > 0) {
                 if (timestamp == lastFrameTimestamp) return;
@@ -275,6 +290,12 @@ public final class Limelight {
 
     /** Status requests are slower than cached frames; call this at a lower rate. */
     public void update_full(VisionPose pose) {
+        update_health();
+        update(pose);
+    }
+
+    /** SDK status I/O is separated so the worker can ingest poses after a slow request. */
+    void update_health() {
         if (device != null) {
             try {
                 LLStatus cameraStatus = device.getStatus();
@@ -287,7 +308,6 @@ public final class Limelight {
                 error = exception.toString();
             }
         }
-        update(pose);
     }
 
     public void stop() {
@@ -366,6 +386,9 @@ public final class Limelight {
         if (!error.isEmpty()) telemetry.addData("Limelight error", error);
     }
 
+    /** Owner-thread reset after invalid localization: never interpolate across an unknown pose gap. */
+    void clear_pose_history() { poseCount = poseNext = 0; }
+
     private void reset_frame() {
         currentFrame = Collections.emptyList();
         lastFrameTimestamp = 0;
@@ -373,7 +396,7 @@ public final class Limelight {
         lastAnalysedResult = null;
         lastReadResult = null;
         capturePose = null;
-        poseCount = poseNext = 0;
+        clear_pose_history();
         // Sequence is monotonic across init, stop and pipeline switches.
     }
 
@@ -401,6 +424,25 @@ public final class Limelight {
         return !calibration.usePinholeRange || (Double.isFinite(calibration.cameraHeightIn)
                 && calibration.cameraHeightIn > 0 && Double.isFinite(calibration.cameraPitchDeg)
                 && calibration.cameraPitchDeg >= 0 && calibration.cameraPitchDeg < 90);
+    }
+
+    /** Remaining cached-frame validity for immutable worker snapshots; no SDK calls. */
+    long result_remaining_ms() {
+        long limit = Math.max(0, maxFrameAgeMs);
+        long elapsed = Math.max(0, VisionPose.now_ms() - lastResultReadMs);
+        if (lastResult.pipelineIndex < 0 || lastResult.stalenessMs > limit
+                || lastResultInitialAgeMs > limit || elapsed > limit - lastResultInitialAgeMs) return -1;
+        return limit - lastResultInitialAgeMs - elapsed;
+    }
+
+    long pollen_remaining_ms() {
+        long remaining = result_remaining_ms();
+        long limit = Math.max(0, maxFrameAgeMs);
+        long elapsed = Math.max(0, VisionPose.now_ms() - publishedFrameMs);
+        if (remaining < 0 || capturePose == null || selectedPipeline != DETECTOR_PIPELINE
+                || lastResult.pipelineIndex != DETECTOR_PIPELINE || publishedFrameAgeMs > limit
+                || elapsed > limit - publishedFrameAgeMs) return -1;
+        return Math.min(remaining, limit - publishedFrameAgeMs - elapsed);
     }
 
     private boolean result_is_fresh() {

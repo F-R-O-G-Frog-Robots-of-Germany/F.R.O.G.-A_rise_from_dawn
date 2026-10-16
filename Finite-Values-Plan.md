@@ -2,7 +2,7 @@
 
 Validate each new sensor sample and each outgoing actuator command at its boundary, so downstream control uses cached validity instead of repeating NaN/infinity checks.
 
-Current scope: all robot implementation stays under `TeamCode/src/main/java/org/firstinspires/ftc/teamcode`. Pedro Pathing uses its standard follower, localizer, drivetrain and tuners. Desktop regression checks under `TeamCode/src/test` are separate from the robot implementation.
+Current scope: all robot implementation stays under `TeamCode/src/main/java/org/firstinspires/ftc/teamcode`. Pedro Pathing uses its standard follower, localizer, drivetrain and tuners. Desktop regression checks under `tests/java` are separate from the robot implementation.
 
 ## Proposed implementation
 

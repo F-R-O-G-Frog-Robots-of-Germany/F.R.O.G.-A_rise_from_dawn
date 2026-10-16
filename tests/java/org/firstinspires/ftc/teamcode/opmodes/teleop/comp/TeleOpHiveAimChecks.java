@@ -102,7 +102,90 @@ public final class TeleOpHiveAimChecks {
         prepared.tick(true, 0, 0, 0);
         check(prepared.shooter.prepareCalls == 1, "A also latches preparation when state was already PREPARE");
         check_target_cache();
+        check_drive_pose_faults();
         System.out.println("TeleOp hive aim checks passed: " + checks);
+    }
+
+    private static void check_drive_pose_faults() throws Exception {
+        Pose start = new Pose(9, 9, 0);
+        Pose[] faults = {null,
+                new Pose(Double.NaN, 9, 0), new Pose(Double.POSITIVE_INFINITY, 9, 0),
+                new Pose(Double.NEGATIVE_INFINITY, 9, 0), new Pose(9, Double.NaN, 0),
+                new Pose(9, Double.POSITIVE_INFINITY, 0), new Pose(9, Double.NEGATIVE_INFINITY, 0),
+                new Pose(9, 9, Double.NaN), new Pose(9, 9, Double.POSITIVE_INFINITY),
+                new Pose(9, 9, Double.NEGATIVE_INFINITY)};
+        for (Alliance alliance : Alliance.values()) {
+            for (Pose fault : faults) {
+                Harness manual = new Harness(start, alliance);
+                manual.tick(false, 0, -0.6f, 0);
+                check(Math.abs(manual.drivetrain.powers.forward()) > 0, "manual drive moves before pose fault");
+                manual.move_pose(fault);
+                manual.tick(true, 0, 0, 0);
+                check_stopped(manual, "known pose fault stops previous motion despite neutral sticks");
+                check(manual.drive.holdCalls == 0, "a simultaneous A press cannot aim from invalid pose");
+                check(!aim_flag(manual, "aimRequested") && !aim_flag(manual, "aimingAtHive"),
+                        "pose fault clears pending and active aim flags");
+                check_recovery(manual, start, true);
+
+                Harness holding = new Harness(start, alliance);
+                holding.tick(true, 0, 0, 0);
+                holding.move_pose(new Pose(12, 11, 0.2));
+                holding.tick(true, 0, 0, 0);
+                check(holding.drive.holding(), "HOLD corrects a disturbed pose before fault");
+                holding.move_pose(fault);
+                holding.tick(true, 0, 0, 0);
+                check_stopped(holding, "known pose fault cancels HOLD and explicitly stops drivetrain");
+                check_recovery(holding, start, true);
+
+                Harness fresh = new Harness(start, alliance);
+                fresh.tick(false, 0, -0.6f, 0);
+                fresh.localizer.pose_on_next_update(fault);
+                fresh.tick(false, 0, -0.6f, 0);
+                check_stopped(fresh, "new pose fault from follower.update stops output in that iteration");
+                check_recovery(fresh, start, false);
+
+                // Pinpoint always constructs a Pose; a null pose during Pedro's HOLD calculation
+                // throws inside Pedro and is handled by the OpMode's ordinary finally cleanup.
+                if (fault != null) {
+                    Harness freshHold = new Harness(start, alliance);
+                    freshHold.tick(true, 0, 0, 0);
+                    freshHold.move_pose(new Pose(12, 11, 0.2));
+                    freshHold.tick(true, 0, 0, 0);
+                    freshHold.localizer.pose_on_next_update(fault);
+                    freshHold.tick(true, 0, 0, 0);
+                    check_stopped(freshHold, "new nonfinite pose during HOLD stops output in that iteration");
+                    check_recovery(freshHold, start, true);
+                }
+            }
+        }
+    }
+
+    private static void check_stopped(Harness teleop, String message) {
+        check(teleop.drive.idle(), message + ": Pedro mode cleared");
+        close(teleop.drivetrain.powers.forward(), 0);
+        close(teleop.drivetrain.powers.strafe(), 0);
+        close(teleop.drivetrain.powers.turn(), 0);
+    }
+
+    private static void check_recovery(Harness teleop, Pose recoveredPose, boolean aHeld) {
+        int holdCalls = teleop.drive.holdCalls;
+        teleop.move_pose(recoveredPose);
+        teleop.tick(aHeld, 0, 0, 0);
+        check(teleop.drive.manual() && teleop.drive.holdCalls == holdCalls,
+                "neutral valid recovery stays manual and cannot revive cancelled aim");
+        close(teleop.drivetrain.powers.forward(), 0);
+        close(teleop.drivetrain.powers.strafe(), 0);
+        close(teleop.drivetrain.powers.turn(), 0);
+        teleop.tick(false, 0, 0, 0);
+        teleop.tick(true, 0, 0, 0);
+        check(teleop.drive.holding() && teleop.drive.holdCalls == holdCalls + 1,
+                "a new A press can explicitly aim after valid recovery");
+    }
+
+    private static boolean aim_flag(Harness teleop, String name) throws Exception {
+        Field flag = Main.class.getDeclaredField(name);
+        flag.setAccessible(true);
+        return flag.getBoolean(teleop);
     }
 
     private static void check_target_cache() {
@@ -187,6 +270,7 @@ public final class TeleOpHiveAimChecks {
             before_drive_update();
             drive.update(0.02);
             currentPose = drive.pose();
+            after_drive_update();
             robot.update_targeting(currentPose);
         }
     }
@@ -208,10 +292,18 @@ public final class TeleOpHiveAimChecks {
 
     private static final class TestLocalizer implements Localizer {
         MotionState state;
+        Pose pendingPose;
+        boolean hasPendingPose;
         TestLocalizer(Pose pose) { setPose(pose); }
+        void pose_on_next_update(Pose pose) { pendingPose = pose; hasPendingPose = true; }
         @Override public void setPose(Pose pose) { state = MotionState.zero().withPose(pose); }
         @Override public MotionState state() { return state; }
-        @Override public void update() { }
+        @Override public void update() {
+            if (hasPendingPose) {
+                setPose(pendingPose);
+                hasPendingPose = false;
+            }
+        }
         @Override public void reset() { state = MotionState.zero(); }
     }
 

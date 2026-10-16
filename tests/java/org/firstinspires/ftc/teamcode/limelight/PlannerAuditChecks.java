@@ -19,7 +19,8 @@ public final class PlannerAuditChecks {
         malformed_inputs_and_extreme_arithmetic();
         exhaustive_small_assignment_oracles();
         capacity_horizon_and_objective();
-        large_maps_and_budgets();
+        large_maps_and_search_limits();
+        stagnation_limit();
         System.out.println("Planner audit passed: " + checks + " checks; " + oracleFields
                 + " small-field exhaustive oracles; " + oracleStates + " oracle states; "
                 + heuristicHaulGaps + " accepted heuristic haul gaps; max observed solve "
@@ -48,7 +49,7 @@ public final class PlannerAuditChecks {
 
     private static Butine.Params fast_settings() {
         Butine.Params p = new Butine.Params();
-        p.computeBudgetMs = 0; p.candidateCap = 30;
+        p.iterationCap = 0; p.localSearchPasses = 0; p.candidateCap = 30;
         return p;
     }
 
@@ -249,16 +250,16 @@ public final class PlannerAuditChecks {
             p.lookaheadRuns = 1 + field % 3; p.discount = field % 2 == 0 ? .75 : 1;
             p.scoreOverheadS = .4; p.remainingS = field % 3 == 0 ? 2.6 : 4 + field % 7;
             p.kinematics.pickupDwellS = .1;
-            if (field % 7 == 0) { p.computeBudgetMs = 1000; p.iterationCap = 5; p.stagnationLimit = 5; }
+            if (field % 7 == 0) { p.iterationCap = 5; p.stagnationLimit = 5; p.localSearchPasses = 2; }
             Oracle oracle = new Oracle(items, start, depot, p);
             oracle.solve(); ++oracleFields;
             Butine.Plan plan = Butine.solve(items, start, depot, p);
             validate_plan(plan, p);
             check(plan.expectedCollected <= oracle.bestCollected, "heuristic cannot exceed exhaustive feasible haul");
             if (plan.expectedCollected < oracle.bestCollected) ++heuristicHaulGaps;
-            if (plan.expectedCollected == oracle.bestCollected && plan.fittingRuns == 1 && size <= 5
-                    && p.capacity >= size && p.computeBudgetMs > 0) {
-                // With one complete short route and generous compute, the exact run permutation applies.
+            if (plan.expectedCollected == size && plan.fittingRuns == 1 && size <= 5
+                    && p.capacity >= size) {
+                // A complete short route uses exact ordering even without randomized restarts.
                 near(oracle.bestObjective, plan.committedTimeS, "single exact route vs assignment oracle");
             }
         }
@@ -270,7 +271,7 @@ public final class PlannerAuditChecks {
                     Butine.Params p = fast_settings();
                     p.capacity = capacity; p.lookaheadRuns = horizon; p.remainingS = remaining;
                     p.scoreOverheadS = .3; p.discount = .7;
-                    p.computeBudgetMs = 1000; p.iterationCap = 4; p.stagnationLimit = 4;
+                    p.iterationCap = 4; p.stagnationLimit = 4; p.localSearchPasses = 2;
                     Oracle oracle = new Oracle(fixed, DEPOT, DEPOT, p);
                     oracle.solve(); ++oracleFields;
                     Butine.Plan plan = Butine.solve(fixed, DEPOT, p);
@@ -284,7 +285,7 @@ public final class PlannerAuditChecks {
             List<Pollen> subset = fixed.subList(0, size);
             Butine.Params p = fast_settings();
             p.capacity = size; p.lookaheadRuns = 1; p.remainingS = 100;
-            p.computeBudgetMs = 1000; p.iterationCap = 0;
+            p.iterationCap = 0;
             Oracle oracle = new Oracle(subset, DEPOT, DEPOT, p);
             oracle.solve(); ++oracleFields;
             Butine.Plan plan = Butine.solve(subset, DEPOT, p);
@@ -325,20 +326,21 @@ public final class PlannerAuditChecks {
         validate_plan(plan, p);
     }
 
-    private static void large_maps_and_budgets() {
+    private static void large_maps_and_search_limits() {
         Random random = new Random(7766);
         List<Pollen> maximum = new ArrayList<>();
         for (int i = 0; i < 30; ++i) maximum.add(item(i, random.nextDouble() * 140, random.nextDouble() * 140));
         for (int i = 0; i < 32; ++i) {
             Butine.Params p = fast_settings();
-            p.computeBudgetMs = i % 4 == 0 ? 15 : i % 4 == 1 ? .1 : i % 4 == 2 ? 0 : -1;
+            p.iterationCap = i % 4 == 0 ? 3 : i % 4 == 1 ? 1 : i % 4 == 2 ? 0 : -1;
+            p.stagnationLimit = 2; p.localSearchPasses = i % 4 < 2 ? 1 : 0;
             p.capacity = i % 3 == 0 ? 0 : 5;
             p.remainingS = i % 2 == 0 ? 3 : 30;
             Butine.Plan plan = Butine.solve(maximum, DEPOT, p);
             validate_plan(plan, p);
             check(plan.candidatesConsidered == 30, "maximum candidate table");
-            check(plan.iterations <= p.iterationCap, "iteration cap");
-            if (p.computeBudgetMs <= 0) check(plan.iterations == 0 && plan.budgetExhausted, "zero optional search budget");
+            check(plan.iterations <= Math.max(0, p.iterationCap), "iteration cap");
+            if (p.iterationCap <= 0) check(plan.iterations == 0, "nonpositive cap disables randomized restarts");
         }
         List<Pollen> large = new ArrayList<>();
         for (int i = 0; i < 4096; ++i) large.add(item(i, 70 + random.nextDouble() * 70, 70 + random.nextDouble() * 70));
@@ -352,6 +354,18 @@ public final class PlannerAuditChecks {
         validate_plan(plan, p);
         p.candidateCap = 0;
         check(Butine.solve(maximum, DEPOT, p).candidatesConsidered == 1, "source minimum candidate cap retained");
+    }
+
+    private static void stagnation_limit() {
+        Butine.Params p = fast_settings();
+        p.capacity = 1; p.lookaheadRuns = 1; p.iterationCap = 8; p.stagnationLimit = 2;
+        List<Pollen> single = Collections.singletonList(item(7, 12, 0));
+        Butine.Plan a = Butine.solve(single, DEPOT, p), b = Butine.solve(single, DEPOT, p);
+        check(a.iterations == 2 && b.iterations == 2, "unchanged one-target search stops after two stagnant restarts");
+        check(Arrays.equals(a.runs[0].ids, b.runs[0].ids), "stagnation stopping is deterministic");
+        near(a.objective, b.objective, "stagnation objective is deterministic");
+        p.stagnationLimit = 0;
+        check(Butine.solve(single, DEPOT, p).iterations == 1, "nonpositive stagnation limit retains one finite restart");
     }
 
     private static void validate_plan(Butine.Plan plan, Butine.Params p) {

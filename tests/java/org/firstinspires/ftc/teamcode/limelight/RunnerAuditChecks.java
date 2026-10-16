@@ -35,7 +35,7 @@ public final class RunnerAuditChecks {
 
     private static Butine.Params parameters() {
         Butine.Params p = new Butine.Params();
-        p.capacity = 1; p.lookaheadRuns = 1; p.computeBudgetMs = 0;
+        p.capacity = 1; p.lookaheadRuns = 1; p.iterationCap = 0; p.localSearchPasses = 0;
         return p;
     }
 

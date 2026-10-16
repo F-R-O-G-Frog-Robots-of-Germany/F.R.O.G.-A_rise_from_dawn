@@ -20,6 +20,8 @@ android {
     namespace = 'org.firstinspires.ftc.teamcode'
     compileSdk 35
 
+    sourceSets.test.java.setSrcDirs([])
+
     packagingOptions {
         jniLibs.useLegacyPackaging true
     }

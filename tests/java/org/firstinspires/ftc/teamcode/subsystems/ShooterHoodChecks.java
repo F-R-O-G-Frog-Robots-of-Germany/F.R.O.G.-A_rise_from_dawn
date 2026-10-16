@@ -66,6 +66,7 @@ public final class ShooterHoodChecks {
                 });
         double[] velocity = {Shooter.STANDARD_RPM * Shooter.ENCODER_TICKS_PER_REV / 60.0};
         double[] power = {0};
+        double[] power2 = {0};
         int[] reads = {0};
         DcMotorEx motor = (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(), new Class<?>[]{DcMotorEx.class},
                 (proxy, method, values) -> {
@@ -79,7 +80,16 @@ public final class ShooterHoodChecks {
         FakeIntake intake = new FakeIntake();
         Shooter shooter = new Shooter();
         field(shooter, "servoHood", new CachedServo(servo, Shooter.HOOD_POSITION_EPSILON));
-        field(shooter, "shooterMotor", new CachedMotor(motor, 0.002));
+        field(shooter, "shooterMotorLeft", new CachedMotor(motor, 0.002));
+        DcMotorEx motor2 = (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(), new Class<?>[]{DcMotorEx.class},
+                (proxy, method, values) -> {
+                    if (method.getName().equals("setPower")) {
+                        power2[0] = (double) values[0];
+                        close(power2[0], power[0]);
+                    }
+                    return null;
+                });
+        field(shooter, "shooterMotorRight", new CachedMotor(motor2, 0.002));
         field(shooter, "intakeSubsystem", intake);
         shooter.set_alliance(Alliance.RED);
         shooter.set_bypass_enabled(true);
@@ -107,6 +117,7 @@ public final class ShooterHoodChecks {
         velocity[0] = 0;
         shooter.update(9, 9);
         check(intake.feedAllowed && shooter.shot_in_progress(), "RPM drop cannot interrupt an active shot");
+        close(power2[0], 1);
         double lastRpm = shooter.get_current_rpm();
         double lastPower = power[0];
         for (double fault : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
@@ -116,6 +127,7 @@ public final class ShooterHoodChecks {
             check(reads[0] == before + 1, "exactly one encoder read each update");
             check(intake.feedAllowed && !shooter.velocity_valid() && power[0] == lastPower,
                     "active shot retains feeding and previous finite power on invalid encoder sample");
+            close(power2[0], lastPower);
             close(shooter.get_current_rpm(), lastRpm);
         }
         shooter.stop_shooting();
@@ -138,6 +150,7 @@ public final class ShooterHoodChecks {
             shooter.update(fault, 9);
             check(!shooter.target_available() && !intake.feedAllowed && power[0] == 0,
                     "invalid localization stops preparation and blocks a new shot");
+            close(power2[0], 0);
             close(shooter.get_target_rpm(), heldRpm);
             close(shooter.get_target_hood_angle(), heldHood);
         }
@@ -153,8 +166,12 @@ public final class ShooterHoodChecks {
         shooter.update(9, 9, true);
         check(power[0] == lastPower && intake.feedAllowed && !shooter.ready_to_feed(),
                 "active shot retains its accepted command after invalid PIDF output");
+        close(power2[0], lastPower);
         shooter.update(9, 9, true);
         check(intake.feedAllowed && shooter.ready_to_feed(), "controller recovers without interrupting the shot");
+        shooter.stop();
+        close(power[0], 0);
+        close(power2[0], 0);
         check_intake_samples();
         System.out.println("Passed " + checks + " hood checks");
     }

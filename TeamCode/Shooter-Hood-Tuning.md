@@ -1,5 +1,7 @@
 # Shooter and hood tuning
 
+Desktop regression sources moved to the project's top-level `tests/java` folder on 2026-10-13. Older validation notes below retain the source paths used at the time.
+
 Both outputs use the same horizontal distance from the robot's localization pose to the nearest alliance hive, in inches. Hive height is not included. The selector compares distances to both alliance hives; with the current coordinates the boundary is Y=71.5, with a tie choosing the bottom hive. Use this same distance definition when collecting data.
 
 ## Implemented features
@@ -11,6 +13,12 @@ Both outputs use the same horizontal distance from the robot's localization pose
 - Feeding gated by RPM tolerance, a valid hood command, and a settling timer after each actual servo command. There is no angle feedback sensor.
 - RPM regulation remains active while shooting.
 - Tuner controls for both curves and a session-only sample capture showing distance, measured RPM, and commanded hood angle.
+
+## Shooter motors and hardware names
+
+Configure two shooter motors named `shooterMotorLeft` and `shooterMotorRight`. Competition TeleOp (through `Robot`) and every autonomous based on `AbstractAuto` initialize the shared `Shooter` subsystem, which commands both motors together using the existing controller and `shooterMotorLeft` encoder feedback. Both motors stop when the subsystem stops. The robot now has eight DC motors: `leftFront`, `leftRear`, `rightFront`, `rightRear`, `intakeMotor`, `transferMotor`, `shooterMotorLeft`, and `shooterMotorRight`.
+
+The tuner starts with both motors enabled. Gamepad 1 Start toggles the shooter; gamepad 1 X disables/enables only `shooterMotorRight`, leaving `shooterMotorLeft` controlled by Start. Both motors receive the same target RPM and local PIDF values when enabled. Telemetry shows the second motor's enable state and measured RPM. Sample capture requires each enabled motor to be within the existing RPM tolerance and identifies whether one or both motors were enabled. Disabling a motor sets its commanded velocity to zero; the tuner uses FLOAT, so it can coast or be back-driven by the mechanism. Existing tuning constants are unchanged.
 
 ## Active filler settings
 

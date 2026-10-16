@@ -77,7 +77,7 @@ public final class Constants {
         c.naturalForwardDeceleration.set(46.0);
         c.naturalStrafeDeceleration.set(79.0);
 
-        c.parametricTConstraint.set(0.998);
+        c.parametricTConstraint.set(0.002);
         c.velocityConstraint.set(0.1);
         c.translationalConstraint.set(0.1);
         c.headingConstraint.set(0.007);

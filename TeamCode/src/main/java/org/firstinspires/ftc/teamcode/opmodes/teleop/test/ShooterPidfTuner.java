@@ -23,6 +23,7 @@ import org.firstinspires.ftc.teamcode.subsystems.Shooter;
  * <p>Controls (gamepad 1):
  * <ul>
  *     <li>Start: toggle the shooter on/off.</li>
+ *     <li>X: disable/enable the right shooter motor (both enabled by default).</li>
  *     <li>Y/B: increase/decrease target RPM by 100.</li>
  *     <li>D-pad up/right/down/left: select P/I/D/F respectively.</li>
  *     <li>Right bumper/left bumper: increase/decrease the selected PIDF value.</li>
@@ -48,7 +49,8 @@ public class ShooterPidfTuner extends LinearOpMode {
     private static final double DEFAULT_D = 0.00001;
     private static final double DEFAULT_F = 0.00017;
 
-    private CachedMotor shooterMotor;
+    private CachedMotor shooterMotorLeft;
+    private CachedMotor shooterMotorRight;
     private CachedServo hoodServo;
     private Follower follower;
     private Alliance alliance;
@@ -56,8 +58,10 @@ public class ShooterPidfTuner extends LinearOpMode {
     private PIDFCoefficients pidf = new PIDFCoefficients(DEFAULT_P, DEFAULT_I, DEFAULT_D, DEFAULT_F);
     private PidfParameter selectedParameter = PidfParameter.P;
     private boolean shooterEnabled = false;
+    private boolean rightMotorEnabled = true;
 
     private boolean previousStart;
+    private boolean previousX;
     private boolean previousBack;
     private boolean previousY;
     private boolean previousB;
@@ -89,16 +93,21 @@ public class ShooterPidfTuner extends LinearOpMode {
     private String captureMessage = "No capture attempted";
     private double commandedRpm = DEFAULT_TARGET_RPM;
     private double measuredRpm;
+    private double measuredRpm2;
     private boolean validTargets;
     private String modelMessage = "Fit A/B/C in Desmos and enter them in Shooter.java manually";
 
     @Override
     public void runOpMode() throws InterruptedException {
         try {
-            shooterMotor = new CachedMotor(hardwareMap.get(DcMotorEx.class, "shooter"), 0.002);
-            shooterMotor.set_power(0.0);
-            shooterMotor.raw().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
-            shooterMotor.raw().setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            shooterMotorLeft = new CachedMotor(hardwareMap.get(DcMotorEx.class, "shooterMotorLeft"), 0.002);
+            shooterMotorLeft.set_power(0.0);
+            shooterMotorLeft.raw().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            shooterMotorLeft.raw().setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
+            shooterMotorRight = new CachedMotor(hardwareMap.get(DcMotorEx.class, "shooterMotorRight"), 0.002);
+            shooterMotorRight.set_power(0.0);
+            shooterMotorRight.raw().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
+            shooterMotorRight.raw().setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
             hoodServo = new CachedServo(hardwareMap.get(Servo.class, "servoHood"), Shooter.HOOD_POSITION_EPSILON);
             command_hood();
             apply_pidf();
@@ -117,6 +126,7 @@ public class ShooterPidfTuner extends LinearOpMode {
                 telemetry.addLine("Shooter PIDF tuner ready; start at (9, 9), heading 0 deg");
                 telemetry.addData("Alliance (G2 B toggles during INIT)", alliance);
                 telemetry.addLine("Start: toggle | Y/B: RPM | D-pad: P/I/D/F");
+                telemetry.addLine("G1 X: disable/enable shooterMotorRight (both motors enabled by default)");
                 telemetry.addLine("Bumpers: decrease/increase selected PIDF");
                 telemetry.addLine("G2 Y: both models; X: RPM/hood curve; left/right: A/B/C; bumpers: edit");
                 telemetry.addLine("G2 up/down: manual hood +/-1 deg; A: capture sample");
@@ -136,8 +146,10 @@ public class ShooterPidfTuner extends LinearOpMode {
                 Pose pose = follower.pose();
                 boolean poseValid = SensorReadings.is_valid(pose);
                 Shooter.HiveDistance hive = Shooter.nearest_hive(pose.x(), pose.y(), alliance, poseValid);
-                SensorReadings.Sample velocity = shooterMotor.sample_velocity();
+                SensorReadings.Sample velocity = shooterMotorLeft.sample_velocity();
+                SensorReadings.Sample velocity2 = shooterMotorRight.sample_velocity();
                 measuredRpm = velocity.get_value() / Shooter.ENCODER_TICKS_PER_REV * 60.0;
+                measuredRpm2 = velocity2.get_value() / Shooter.ENCODER_TICKS_PER_REV * 60.0;
                 update_model_controls();
                 validTargets = !distanceModelEnabled || hive.valid;
                 if (distanceModelEnabled) {
@@ -159,17 +171,20 @@ public class ShooterPidfTuner extends LinearOpMode {
                 } else {
                     modelMessage = "Fit both curves to matched lowest-reliable-RPM shot rows";
                 }
-                validTargets &= shooterMotor.set_velocity(shooterEnabled && validTargets && velocity.is_valid()
-                        ? rpm_to_ticks_per_second(commandedRpm) : 0.0);
+                validTargets &= command_flywheels(velocity.is_valid()
+                        && (!rightMotorEnabled || velocity2.is_valid()));
 
                 if (pressed(gamepad2.a, previousCapture)) {
                     if (shooterEnabled && validTargets && commandedRpm > 0
                             && hive.valid && velocity.is_valid()
                             && Math.abs(measuredRpm - commandedRpm) <= Shooter.SHOOT_SPEED_TOLERANCE_RPM
+                            && (!rightMotorEnabled || (velocity2.is_valid()
+                                && Math.abs(measuredRpm2 - commandedRpm) <= Shooter.SHOOT_SPEED_TOLERANCE_RPM))
                             && hood_settled()) {
                         capturedSample = String.format(java.util.Locale.US, "%.3f, %.1f, %.2f",
                                 hive.distance, measuredRpm, appliedHoodAngle);
-                        captureMessage = "Captured; verify the shot succeeded before using this row";
+                        captureMessage = "Captured with " + (rightMotorEnabled ? "both motors" : "left motor only")
+                                + "; verify the shot succeeded before using this row";
                     } else {
                         captureMessage = "Rejected: require valid targets, motor ON, RPM in tolerance and settled hood";
                     }
@@ -181,9 +196,13 @@ public class ShooterPidfTuner extends LinearOpMode {
             }
 
         } finally {
-            if (shooterMotor != null) {
-                shooterMotor.set_velocity(0.0);
-                shooterMotor.set_power(0.0);
+            if (shooterMotorLeft != null) {
+                shooterMotorLeft.set_velocity(0.0);
+                shooterMotorLeft.set_power(0.0);
+            }
+            if (shooterMotorRight != null) {
+                shooterMotorRight.set_velocity(0.0);
+                shooterMotorRight.set_power(0.0);
             }
             if (follower != null) {
                 follower.stop();
@@ -214,6 +233,9 @@ public class ShooterPidfTuner extends LinearOpMode {
     private void update_controls() {
         if (pressed(gamepad1.start, previousStart)) {
             shooterEnabled = !shooterEnabled;
+        }
+        if (pressed(gamepad1.x, previousX)) {
+            rightMotorEnabled = !rightMotorEnabled;
         }
         if (pressed(gamepad1.back, previousBack)) {
             targetRpm = DEFAULT_TARGET_RPM;
@@ -249,6 +271,7 @@ public class ShooterPidfTuner extends LinearOpMode {
         }
 
         previousStart = gamepad1.start;
+        previousX = gamepad1.x;
         previousBack = gamepad1.back;
         previousY = gamepad1.y;
         previousB = gamepad1.b;
@@ -283,9 +306,20 @@ public class ShooterPidfTuner extends LinearOpMode {
     }
 
     private void apply_pidf() {
-        if (shooterMotor != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
-            shooterMotor.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
+        if (shooterMotorLeft != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
+            shooterMotorLeft.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
         }
+        if (shooterMotorRight != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
+            shooterMotorRight.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
+        }
+    }
+
+    private boolean command_flywheels(boolean velocityValid) {
+        double targetVelocity = shooterEnabled && validTargets && velocityValid
+                ? rpm_to_ticks_per_second(commandedRpm) : 0.0;
+        boolean accepted = shooterMotorLeft.set_velocity(targetVelocity);
+        accepted &= shooterMotorRight.set_velocity(rightMotorEnabled ? targetVelocity : 0.0);
+        return accepted;
     }
 
     private void update_model_controls() {
@@ -317,6 +351,7 @@ public class ShooterPidfTuner extends LinearOpMode {
         double robotY = pose.y();
 
         telemetry.addData("Shooter", shooterEnabled ? "RUNNING" : "OFF");
+        telemetry.addData("Right shooter (G1 X toggles)", rightMotorEnabled ? "ENABLED" : "DISABLED");
         telemetry.addData("Target RPM", "%.1f", commandedRpm);
         telemetry.addData("Target mode", distanceModelEnabled ? "QUADRATIC MODEL" : "MANUAL RPM");
         telemetry.addData("Selected coefficient", "ABC".charAt(selectedCoefficient));
@@ -335,7 +370,9 @@ public class ShooterPidfTuner extends LinearOpMode {
         telemetry.addData("Capture status", captureMessage);
         telemetry.addData("Model", modelMessage);
         telemetry.addData("Measured RPM", "%.1f", measuredRpm);
-        telemetry.addData("Encoder valid", shooterMotor.get_velocity_sample().is_valid());
+        telemetry.addData("Encoder valid", shooterMotorLeft.get_velocity_sample().is_valid());
+        telemetry.addData("Right shooter measured RPM", "%.1f", measuredRpm2);
+        telemetry.addData("Right shooter encoder valid", shooterMotorRight.get_velocity_sample().is_valid());
         telemetry.addData("Selected PIDF", selectedParameter.name());
         telemetry.addData("PIDF step", "P/F: 0.0001 | I: 0.00000001 | D: 0.000001");
         telemetry.addData("P", "%.8f", pidf.p);

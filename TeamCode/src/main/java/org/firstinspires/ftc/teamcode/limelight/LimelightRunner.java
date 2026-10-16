@@ -9,8 +9,9 @@ public final class LimelightRunner {
         public double lastJumpIn;
     }
 
-    private enum State { IDLE, LOOKING, SETTLING }
+    private enum State { IDLE, LOOKING, RESTORING, SETTLING }
     private final Limelight camera;
+    private final LimelightWorker worker;
     private final PollenMap map;
     private final ButineRunner.Drive drive;
     private final Stats stats = new Stats();
@@ -21,12 +22,25 @@ public final class LimelightRunner {
     private double initialFrameTimestamp;
     private VisionPose stationaryPose;
     private boolean movedDuringLook;
+    private long tagPipelineToken, restorePipelineToken;
 
     public LimelightRunner(Limelight camera, PollenMap map, ButineRunner.Drive drive) {
         if (camera == null || map == null || drive == null) {
             throw new IllegalArgumentException("camera, map and drive are required");
         }
         this.camera = camera;
+        this.worker = null;
+        this.map = map;
+        this.drive = drive;
+    }
+
+    /** Async camera path: all follower and drive calls still execute on the calling robot thread. */
+    public LimelightRunner(LimelightWorker worker, PollenMap map, ButineRunner.Drive drive) {
+        if (worker == null || map == null || drive == null) {
+            throw new IllegalArgumentException("worker, map and drive are required");
+        }
+        this.camera = null;
+        this.worker = worker;
         this.map = map;
         this.drive = drive;
     }
@@ -38,6 +52,11 @@ public final class LimelightRunner {
         stats.attempts = stats.applied = stats.rejectedJump = stats.rejectedBounds = 0;
         stats.rejectedMoving = stats.noSolve = 0;
         stats.lastJumpIn = 0;
+        if (worker != null) {
+            if (!worker.start()) return false;
+            map.init();
+            return true; // Accepted asynchronously; worker.snapshot().status reports camera init.
+        }
         map.init();
         return camera.init();
     }
@@ -62,7 +81,7 @@ public final class LimelightRunner {
             lastFix = "rejected: invalid odometry pose";
             return false;
         }
-        if (!camera.is_connected()) {
+        if (!(worker == null ? camera.is_connected() : worker.snapshot().connected)) {
             stats.noSolve++;
             lastFix = "no solve: camera disconnected";
             return false;
@@ -72,11 +91,19 @@ public final class LimelightRunner {
         this.settleSeconds = settleSeconds;
         stationaryPose = startPose;
         movedDuringLook = false;
-        initialFrameTimestamp = camera.get_result().frameTimestamp;
-        if (!camera.set_pipeline(Limelight.APRILTAG_PIPELINE)) {
+        initialFrameTimestamp = worker == null ? camera.get_result().frameTimestamp
+                : worker.snapshot().result.frameTimestamp;
+        boolean switched;
+        if (worker == null) switched = camera.set_pipeline(Limelight.APRILTAG_PIPELINE);
+        else {
+            tagPipelineToken = worker.request_pipeline(Limelight.APRILTAG_PIPELINE);
+            switched = tagPipelineToken != 0;
+        }
+        if (!switched) {
             stats.noSolve++;
             lastFix = "no solve: pipeline switch failed";
-            camera.set_pipeline(Limelight.DETECTOR_PIPELINE);
+            if (worker == null) camera.set_pipeline(Limelight.DETECTOR_PIPELINE);
+            else worker.request_stop();
             return false;
         }
         startedNanos = System.nanoTime();
@@ -89,7 +116,10 @@ public final class LimelightRunner {
         try { update_vision(); }
         catch (RuntimeException exception) {
             lastFix = "vision runner failure: " + exception;
-            if (state == State.LOOKING) restore_detector(System.nanoTime());
+            if (worker != null) {
+                worker.request_stop();
+                state = State.IDLE;
+            } else if (state == State.LOOKING) restore_detector(System.nanoTime());
             throw exception;
         }
     }
@@ -97,26 +127,47 @@ public final class LimelightRunner {
     private void update_vision() {
         long now = System.nanoTime();
         VisionPose pose = drive.pose();
-        camera.update(pose);
-        if (now - fullUpdateNanos >= 250_000_000L) {
-            camera.update_full(pose);
-            fullUpdateNanos = now;
+        LimelightWorker.Snapshot view = null;
+        if (worker != null) {
+            worker.submit_pose(pose);
+            view = worker.snapshot();
+        } else {
+            camera.update(pose);
+            if (now - fullUpdateNanos >= 250_000_000L) {
+                camera.update_full(pose);
+                fullUpdateNanos = now;
+            }
+            map.update(camera);
         }
-        map.update(camera);
         if (state == State.LOOKING) {
             movedDuringLook |= drive.is_busy() || pose == null || !pose.is_finite()
                     || stationaryPose == null || !stationaryPose.is_finite()
                     || pose.distance_to(stationaryPose) > 0.5
                     || Math.abs(VisionPose.wrap_pi(pose.heading - stationaryPose.heading)) > Math.toRadians(5);
-            VisionPose fix = camera.get_pose();
+            VisionPose fix = worker == null ? camera.get_pose() : view.get_pose();
+            int pipeline = worker == null ? camera.pipeline() : view.pipeline;
+            double frameTimestamp = worker == null ? camera.get_result().frameTimestamp
+                    : view.result.frameTimestamp;
+            boolean tagReady = worker == null
+                    || (view.pipelineAckToken >= tagPipelineToken && view.pipelineAckSuccess);
             if ((now - startedNanos) / 1e9 >= lookSeconds) {
                 stats.noSolve++;
                 lastFix = "no solve: no fresh AprilTag pose within look deadline";
                 restore_detector(now);
-            } else if (camera.pipeline() == Limelight.APRILTAG_PIPELINE && fix != null
-                    && (initialFrameTimestamp <= 0 || camera.get_result().frameTimestamp != initialFrameTimestamp)) {
+            } else if (tagReady && pipeline == Limelight.APRILTAG_PIPELINE && fix != null
+                    && (initialFrameTimestamp <= 0 || frameTimestamp != initialFrameTimestamp)) {
                 apply_fix(fix);
                 restore_detector(now);
+            }
+        } else if (state == State.RESTORING) {
+            if (worker.pipeline_applied(restorePipelineToken, Limelight.DETECTOR_PIPELINE)) {
+                startedNanos = now;
+                state = State.SETTLING;
+            } else if (!worker.is_running() || now - startedNanos >= 2_000_000_000L
+                    || (view.pipelineAckToken >= restorePipelineToken && !view.pipelineAckSuccess)) {
+                lastFix += "; detector restore failed or timed out";
+                worker.request_stop();
+                state = State.IDLE;
             }
         } else if (state == State.SETTLING && (now - startedNanos) / 1e9 >= settleSeconds) {
             state = State.IDLE;
@@ -146,12 +197,23 @@ public final class LimelightRunner {
             return;
         }
         drive.set_pose(fix);
+        if (worker != null) worker.submit_pose(fix);
         stats.applied++;
         stats.lastJumpIn = jump;
         lastFix = "applied " + jump + " in correction";
     }
 
     private void restore_detector(long now) {
+        if (worker != null) {
+            restorePipelineToken = worker.request_pipeline(Limelight.DETECTOR_PIPELINE);
+            startedNanos = now;
+            if (restorePipelineToken == 0) {
+                lastFix += "; detector restore request rejected";
+                worker.request_stop();
+                state = State.IDLE;
+            } else state = State.RESTORING;
+            return;
+        }
         if (!camera.set_pipeline(Limelight.DETECTOR_PIPELINE)) {
             lastFix += "; detector restore failed";
             camera.stop();
@@ -166,12 +228,17 @@ public final class LimelightRunner {
 
     public void stop() {
         state = State.IDLE;
-        camera.set_pipeline(Limelight.DETECTOR_PIPELINE);
-        camera.stop();
+        if (worker != null) worker.stop();
+        else {
+            camera.set_pipeline(Limelight.DETECTOR_PIPELINE);
+            camera.stop();
+        }
     }
 
     public void telemetry(Telemetry telemetry) {
-        camera.telemetry(telemetry);
+        if (telemetry == null) return;
+        if (worker == null) camera.telemetry(telemetry);
+        else worker.telemetry(telemetry);
         telemetry.addData("Map tracks", map.tracks().size());
         telemetry.addData("Relocalization", "%d/%d %s", stats.applied, stats.attempts, lastFix);
         telemetry.addData("Reloc rejects", "jump=%d bounds=%d moving=%d no solve=%d",

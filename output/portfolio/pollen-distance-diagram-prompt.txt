@@ -1,0 +1,36 @@
+Use case: scientific-educational.
+Create a polished, mathematically accurate infographic for FTC robotics team F.R.O.G., explaining how a Limelight camera detection becomes the ground distance to a pollen game piece. It must be a portfolio-ready landscape infographic, high resolution, clean flat engineering illustration, very legible typography. Dark charcoal background (#1e1e1e), white text, bright frog green accents (#40dd05), cyan for forward distance, orange for sideways displacement, green for ground distance. No unnecessary decoration, photorealism, watermark, or invented performance claims.
+
+Title exactly: "From Limelight Detection to Pollen Distance".
+Use three panels: two large panels across the top, one formula/model panel along the bottom. Clear room between all labels.
+
+TOP LEFT panel heading "1. Position in the camera view".
+Draw a landscape camera-view rectangle, crosshair at its centre, one round yellow pollen object above and right of centre.
+A vertical scale immediately outside the left border must run from "0" at the BOTTOM through "0.5" at the CENTRE to "1" at the TOP. Caption that scale "normalizedVerticalPosition".
+Draw labelled angular offsets from the centre crosshair toward the pollen's image centre: horizontal "horizontalOffset (tx)", vertical "verticalOffset (ty)". Use small clear arrows aligned horizontally/vertically and do not imply offsets are distances in cm.
+Mark the full vertical extent on the right with a bracket labelled "verticalFieldOfView".
+Small explanatory caption: "A unitless value: bottom = 0, centre = 0.5, top = 1."
+Do not claim normalizedVerticalPosition is physical distance or linear pixel position; it normalizes the vertical angle.
+
+TOP RIGHT panel heading "2. Distances along the floor".
+Draw an exact schematic top-down right triangle on a subtle floor plane with vertices camera ground projection at bottom-left, point directly ahead at top-left, pollen at top-right. The camera/robot's forward direction points vertically UP. The two legs are forward UP and rightward RIGHT.
+Place a small camera icon ONLY at the origin and label "Camera floor projection". Draw a round yellow pollen at the top-right endpoint, label "Pollen".
+Vertical leg cyan, label "forwardDistance = 60 cm".
+Horizontal leg orange, label "20 cm right" and on another short line "leftDistance = -20 cm".
+Diagonal from camera floor projection to pollen bright green, label "groundDistance = 63.2 cm".
+Mark a right-angle symbol at the top-left vertex. The illustration is schematic, not a scale drawing. The diagonal must terminate at the actual pollen. The forward leg MUST NOT go diagonally to the pollen.
+Short caption: "Forward distance ignores sideways displacement."
+Formula below the triangle exactly: "groundDistance = sqrt(forwardDistance² + leftDistance²)".
+Short note exactly: "Illustrative example; distances are horizontal, not camera-to-pollen slant range."
+
+BOTTOM panel heading "3. Convert vertical angle into forward distance".
+Show two clean equations on separate rows, exact names and legible typography:
+"u = clamp((verticalOffset + verticalFieldOfView / 2) / verticalFieldOfView, 0, 1)"
+"forwardDistance = minimumForwardDistance + linearDistanceCoefficient × u + quadraticDistanceCoefficient × u²"
+Then a small line exactly: "u = normalizedVerticalPosition".
+Below give three concise definitions in three columns:
+"minimumForwardDistance: estimate at the bottom of the view"
+"linearDistanceCoefficient: controls the linear rise"
+"quadraticDistanceCoefficient: controls the curvature"
+Bottom footnote exactly: "Model coefficients must be verified using measured distances on the robot."
+These formulas are an empirical quadratic model, not a pinhole model. Do not draw a claim of guaranteed accuracy. All words, numbers, variable names, math, signs, and scale orientation must be correct and readable. No formulas other than specified.

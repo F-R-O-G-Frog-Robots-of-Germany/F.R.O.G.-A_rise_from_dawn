@@ -161,7 +161,6 @@ public final class ButineTest extends LinearOpMode {
         ArrayList<Pollen> remaining = new ArrayList<>(observations);
         Butine.Params local = new Butine.Params(params);
         local.lookaheadRuns = lookahead;
-        local.computeBudgetMs = Math.max(0.5, params.computeBudgetMs / (runs * 2));
         double total = 0;
         int collected = 0;
         for (int r = 0; r < runs && !remaining.isEmpty(); r++) {

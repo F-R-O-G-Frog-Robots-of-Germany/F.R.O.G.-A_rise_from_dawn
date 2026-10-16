@@ -15,7 +15,7 @@ public final class ButineRunner {
         void set_pose(VisionPose pose);
     }
 
-    public enum State { IDLE, DRIVING, COMPLETE, ABORTED }
+    public enum State { IDLE, PLANNING, DRIVING, COMPLETE, ABORTED }
 
     public static final class Leg {
         public final VisionPose from, target;
@@ -47,6 +47,7 @@ public final class ButineRunner {
     private static final int MAX_REPLANS = 1;
     private final PollenMap map;
     private final Drive drive;
+    private final ButineWorker planner;
     private final Stats stats = new Stats();
     private final ArrayList<Integer> unreachableIds = new ArrayList<>();
     private final ArrayList<VisionPose> unreachablePositions = new ArrayList<>();
@@ -62,16 +63,29 @@ public final class ButineRunner {
     private boolean dispatched, armed;
     private boolean waitingPickup;
     private String lastReport = "idle";
+    private long planningRequest;
+    private boolean planningReplan;
+    private Butine.Params planningParams;
 
     public ButineRunner(PollenMap map, Drive drive) {
+        this(map, drive, null);
+    }
+
+    /** Optional CPU-2 planner; start/stop its lifecycle in the caller's init/finally. */
+    public ButineRunner(PollenMap map, Drive drive, ButineWorker planner) {
         if (map == null || drive == null) throw new IllegalArgumentException("map and drive are required");
         this.map = map;
         this.drive = drive;
+        this.planner = planner;
     }
 
     /** A depot is already mirrored into the same real field frame as camera observations. */
     public boolean run_butine(VisionPose depot, Butine.Params parameters, double speedScale) {
         if (is_busy() || drive.is_busy()) return false;
+        if (planner != null && !planner.is_running()) {
+            lastReport = "planner is not running";
+            return false;
+        }
         if (depot == null || !depot.is_finite() || parameters == null
                 || !Double.isFinite(speedScale) || speedScale <= 0 || speedScale > 1) {
             throw new IllegalArgumentException("finite depot, parameters and speed scale in (0,1] are required");
@@ -89,8 +103,8 @@ public final class ButineRunner {
             lastReport = "no fitting collection run";
             return false;
         }
-        stats.runsStarted++;
-        state = State.DRIVING;
+        if (planner == null) stats.runsStarted++;
+        state = planner == null ? State.DRIVING : State.PLANNING;
         return true;
     }
 
@@ -113,9 +127,26 @@ public final class ButineRunner {
             }
             if (!excluded) candidates.add(pollen);
         }
+        if (planner != null) {
+            if (!planner.is_running()) return false;
+            state = State.ABORTED;
+            drive.stop();
+            planningRequest = planner.request_plan(candidates, start, depot, local, 0);
+            if (planningRequest == 0) return false;
+            planningReplan = replanning; planningParams = local;
+            legs = Collections.emptyList(); legIndex = 0;
+            dispatched = armed = waitingPickup = false;
+            stats.planned = 0; stats.predictedS = 0; lastPlan = null;
+            state = State.PLANNING; lastReport = "waiting for planner request " + planningRequest;
+            return true;
+        }
         lastPlan = Butine.solve(candidates, start, depot, local);
         stats.solves++;
         stats.solveUsTotal += lastPlan.solveUs;
+        return install_plan(start, local);
+    }
+
+    private boolean install_plan(VisionPose start, Butine.Params local) {
         stats.planned = 0;
         stats.predictedS = 0;
         if (lastPlan.fittingRuns <= 0 || lastPlan.runs[0].count <= 0) {
@@ -131,6 +162,82 @@ public final class ButineRunner {
         legIndex = 0;
         dispatched = armed = waitingPickup = false;
         return true;
+    }
+
+    /** Poll publication only; solver, map mutation and drive ownership never overlap. */
+    private void update_planning() {
+        VisionPose here = drive.pose();
+        if (here == null || !here.is_finite() || drive.is_busy()
+                || (System.nanoTime() - runStartedNanos) / 1e9 >= params.remainingS) {
+            planner.cancel_pending(); drive.stop(); state = State.ABORTED;
+            lastReport = "planning cancelled: motion, invalid pose or expired match time";
+            return;
+        }
+        ButineWorker.Result result = planner.latest_result();
+        if (result == null || result.requestId != planningRequest) {
+            if (!planner.is_running() || planner.stats().latestRequestId != planningRequest) {
+                drive.stop(); state = State.ABORTED;
+                lastReport = "planner stopped or request superseded";
+            }
+            return;
+        }
+        stats.solves++;
+        if (result.plan != null) stats.solveUsTotal += result.plan.solveUs;
+        if (result.error != null) {
+            state = State.ABORTED; drive.stop();
+            lastReport = "planner failed: " + result.error;
+            return;
+        }
+        lastPlan = result.plan;
+        if (lastPlan == null || lastPlan.fittingRuns == 0 || lastPlan.runs[0].count == 0) {
+            finish_empty_plan(here, "no fitting collection run");
+            return;
+        }
+        if (!result.executable(here, 0, 1.0, Math.toRadians(8)) || !targets_still_present(lastPlan.runs[0])) {
+            finish_empty_plan(here, "planning result rejected: moved start, changed targets or elapsed deadline");
+            return;
+        }
+        if (!install_plan(here, planningParams)) {
+            finish_empty_plan(here, "no fitting collection run");
+            return;
+        }
+        double remaining = params.remainingS - (System.nanoTime() - runStartedNanos) / 1e9;
+        if (stats.predictedS + Math.max(0, params.scoreOverheadS) > remaining) {
+            finish_empty_plan(here, "planned run no longer fits after start-pose correction");
+            return;
+        }
+        if (!planningReplan) stats.runsStarted++;
+        state = State.DRIVING;
+        lastReport = "planner request " + planningRequest + " accepted after " + result.solveMs + " ms";
+    }
+
+    private boolean targets_still_present(Butine.Run run) {
+        List<Pollen> current = map.snapshot();
+        double gate = Math.min(PICKUP_RADIUS_IN, map.config.matchDistanceIn);
+        if (!Double.isFinite(gate) || gate < 0) return false;
+        for (int i = 0; i < run.count; i++) {
+            boolean found = false;
+            for (Pollen pollen : current) {
+                if (pollen.id == run.ids[i] && pollen.position.distance_to(run.poses[i]) <= gate) {
+                    found = true; break;
+                }
+            }
+            if (!found) return false;
+        }
+        return true;
+    }
+
+    private void finish_empty_plan(VisionPose here, String reason) {
+        planner.cancel_pending();
+        stats.planned = 0; stats.predictedS = 0;
+        if (planningReplan) {
+            legs = Collections.singletonList(home_leg(here, depot, params.kinematics));
+            legIndex = 0; dispatched = armed = waitingPickup = false;
+            state = State.DRIVING;
+        } else {
+            legs = Collections.emptyList(); state = State.IDLE;
+        }
+        lastReport = reason;
     }
 
     public static List<Leg> build_run_legs(Butine.Run run, VisionPose depot, Butine.Kinematics k) {
@@ -171,8 +278,9 @@ public final class ButineRunner {
     public void update() {
         if (!is_busy()) return;
         try {
-            update_run();
+            if (state == State.PLANNING) update_planning(); else update_run();
         } catch (RuntimeException exception) {
+            if (planner != null) planner.cancel_pending();
             state = State.ABORTED;
             lastReport = "runner stopped after failure: " + exception;
             try { drive.stop(); }
@@ -326,9 +434,10 @@ public final class ButineRunner {
         legs = Collections.singletonList(home_leg(drive.pose(), depot, params.kinematics));
         legIndex = 0;
         dispatched = armed = waitingPickup = false;
+        state = State.DRIVING;
     }
 
-    public boolean is_busy() { return state == State.DRIVING; }
+    public boolean is_busy() { return state == State.PLANNING || state == State.DRIVING; }
     public State state() { return state; }
     public Stats stats() { return stats; }
     public Butine.Plan last_plan() { return lastPlan; }
@@ -340,6 +449,7 @@ public final class ButineRunner {
     public void clear_unreachable() { unreachableIds.clear(); unreachablePositions.clear(); }
 
     public void stop() {
+        if (planner != null) planner.cancel_pending();
         if (is_busy()) state = State.ABORTED;
         drive.stop();
     }

@@ -11,6 +11,7 @@ import org.firstinspires.ftc.teamcode.core.units.Units.RobotState;
 import org.firstinspires.ftc.teamcode.Robot;
 import org.firstinspires.ftc.teamcode.core.control.CompConfig;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
+import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.opmodes.teleop.AbstractTeleOp;
 import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
@@ -108,6 +109,7 @@ public class Main extends AbstractTeleOp {
     @Override
     protected void before_drive_update() {
         update_alliance_selection(System.nanoTime());
+        if (stop_for_invalid_pose()) return;
         if (aimRequested) {
             aimRequested = false;
             aim_at_hive();
@@ -127,6 +129,20 @@ public class Main extends AbstractTeleOp {
                 alliance == Alliance.BLUE ? Math.PI : 0
         );
         follower.manual(powers);
+    }
+
+    @Override
+    protected void after_drive_update() {
+        stop_for_invalid_pose();
+    }
+
+    private boolean stop_for_invalid_pose() {
+        if (SensorReadings.is_valid(currentPose)) return false;
+        aimRequested = false;
+        aimingAtHive = false;
+        follower.stop();
+        follower.drivetrain.stop();
+        return true;
     }
 
     private void aim_at_hive() {

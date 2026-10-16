@@ -17,10 +17,13 @@ public abstract class LastPositionStorage {
     static Alliance currentAlliance = Alliance.RED;
 
     public static void store_data(Pose POSITION, Alliance alliance) {
-        if (alliance == null || !SensorReadings.is_valid(POSITION)) return;
+        if (alliance != null) currentAlliance = alliance;
+        if (alliance == null || !SensorReadings.is_valid(POSITION)) {
+            dataStored = false;
+            return;
+        }
         dataStored = true;
         LAST_POSITION = POSITION;
-        currentAlliance = alliance;
         STORAGE_TIME = Time.ms(System.currentTimeMillis());
     }
 

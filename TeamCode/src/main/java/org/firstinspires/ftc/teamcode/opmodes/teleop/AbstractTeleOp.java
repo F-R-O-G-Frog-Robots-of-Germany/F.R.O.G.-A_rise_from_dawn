@@ -106,6 +106,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                 before_drive_update();
                 follower.update();
                 currentPose = follower.pose();
+                after_drive_update();
                 PeriodicRegistry.run_all();
                 op_mode_loop();
 
@@ -115,7 +116,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                     get_telemetry_manager().addData("Cycle ms", loopTiming.cycle_ms());
                     get_telemetry_manager().addData("Hz", loopTiming.hz());
                 }
-                if (CompConfig.telemetry_enabled()) {
+                if (CompConfig.telemetry_enabled() && currentPose != null) {
                     get_telemetry_manager().addData("x [in]", currentPose.x());
                     get_telemetry_manager().addData("y [in]", currentPose.y());
                     get_telemetry_manager().addData("heading [°]", toDegrees(currentPose.heading()));
@@ -201,6 +202,9 @@ public abstract class AbstractTeleOp extends LinearOpMode {
 
     /** Supply this iteration's manual command before Pedro applies it in update(). */
     protected void before_drive_update() { }
+
+    /** Check the fresh localization sample before the rest of this iteration proceeds. */
+    protected void after_drive_update() { }
 
     protected abstract void op_mode_stop();
 

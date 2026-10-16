@@ -59,7 +59,7 @@ public final class ButineRegression {
 
     private static void test_exact_short_run() {
         Butine.Params p = new Butine.Params();
-        p.capacity = 3; p.lookaheadRuns = 1; p.computeBudgetMs = 1000; p.iterationCap = 0;
+        p.capacity = 3; p.lookaheadRuns = 1; p.iterationCap = 0; p.localSearchPasses = 0;
         VisionPose depot = new VisionPose(0, 0, 0);
         List<Pollen> items = Arrays.asList(pollen(1, 34, 3), pollen(2, -12, 29), pollen(3, 7, -22));
         Butine.Plan plan = Butine.solve(items, depot, p);
@@ -77,7 +77,7 @@ public final class ButineRegression {
 
     private static void test_filtering_and_deadlines() {
         Butine.Params p = new Butine.Params();
-        p.computeBudgetMs = 0; p.minConfidence = .5;
+        p.iterationCap = 0; p.localSearchPasses = 0; p.minConfidence = .5;
         VisionPose depot = new VisionPose(0, 0, 0);
         check(Butine.solve(Collections.<Pollen>emptyList(), depot, p).runCount == 0, "empty map");
         List<Pollen> items = new ArrayList<>();
@@ -114,7 +114,7 @@ public final class ButineRegression {
 
     private static void test_live_start() {
         Butine.Params p = new Butine.Params();
-        p.computeBudgetMs = 0; p.capacity = 2; p.lookaheadRuns = 2;
+        p.iterationCap = 0; p.localSearchPasses = 0; p.capacity = 2; p.lookaheadRuns = 2;
         p.remainingS = 100;
         VisionPose start = new VisionPose(65, 45, .7), depot = new VisionPose(5, 8, -1.2);
         List<Pollen> items = Arrays.asList(pollen(1, 70, 45), pollen(2, 66, 60), pollen(3, 10, 16));
@@ -129,7 +129,7 @@ public final class ButineRegression {
 
     private static void test_reproducibility() {
         Butine.Params p = new Butine.Params();
-        p.computeBudgetMs = 1000; p.iterationCap = 8; p.stagnationLimit = 8;
+        p.iterationCap = 8; p.stagnationLimit = 8;
         p.localSearchPasses = 2; p.capacity = 3; p.lookaheadRuns = 3; p.remainingS = 100;
         Random random = new Random(70);
         List<Pollen> items = new ArrayList<>();
@@ -137,7 +137,15 @@ public final class ButineRegression {
         VisionPose depot = new VisionPose(50, 50, 0);
         Butine.Plan a = Butine.solve(items, depot, p), b = Butine.solve(items, depot, p);
         check(a.runCount == b.runCount, "seed run count reproducibility");
-        for (int r = 0; r < a.runCount; ++r) check(Arrays.equals(a.runs[r].ids, b.runs[r].ids), "seed order reproducibility");
+        check(a.iterations == b.iterations, "seed iteration count reproducibility");
+        check(a.expectedCollected == b.expectedCollected, "seed haul reproducibility");
+        near(a.objective, b.objective, "seed objective reproducibility");
+        near(a.committedTimeS, b.committedTimeS, "seed committed time reproducibility");
+        for (int r = 0; r < a.runCount; ++r) {
+            check(Arrays.equals(a.runs[r].ids, b.runs[r].ids), "seed order reproducibility");
+            check(a.runs[r].fits == b.runs[r].fits, "seed deadline fit reproducibility");
+            near(a.runs[r].timeS, b.runs[r].timeS, "seed run time reproducibility");
+        }
         validate_plan(a, p); validate_plan(b, p);
     }
 
@@ -145,7 +153,8 @@ public final class ButineRegression {
         Random random = new Random(1537);
         for (int field = 0; field < 80; ++field) {
             Butine.Params p = new Butine.Params();
-            p.computeBudgetMs = field % 4 == 0 ? 10 : 0;
+            p.iterationCap = field % 4 == 0 ? 3 : 0;
+            p.stagnationLimit = 3; p.localSearchPasses = field % 4 == 0 ? 1 : 0;
             p.capacity = field % 3 == 0 ? 0 : 2 + field % 4;
             p.lookaheadRuns = 1 + field % 3; p.remainingS = field % 5 == 0 ? 2.5 : 8 + field % 30;
             p.candidateCap = 30;
@@ -162,6 +171,7 @@ public final class ButineRegression {
         check(plan.runCount <= Butine.MAX_RUNS, "bounded run count");
         check(Double.isFinite(plan.committedTimeS) && plan.committedTimeS <= p.remainingS + 1e-7, "deadline respected");
         check(plan.solveUs >= 0 && Double.isFinite(plan.solveUs), "measured solve time");
+        check(plan.iterations >= 0 && plan.iterations <= Math.max(0, p.iterationCap), "finite iteration limit");
         Set<Integer> ids = new HashSet<>();
         int collected = 0, fitting = 0;
         double committed = 0;
