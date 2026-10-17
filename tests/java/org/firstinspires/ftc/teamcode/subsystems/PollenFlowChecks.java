@@ -8,7 +8,6 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
-import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.inputs.InputManager;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 import org.firstinspires.ftc.teamcode.opmodes.teleop.AbstractTeleOp;
@@ -271,11 +270,11 @@ public final class PollenFlowChecks {
             set(intake, Intake.class, "transferMotor", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.01));
             set(shooter, Shooter.class, "shooterMotorLeft", new CachedMotor(motor(velocity, flywheelPower, flywheelWrites), 0.002));
             set(shooter, Shooter.class, "shooterMotorRight", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.002));
-            set(shooter, Shooter.class, "servoHood", new CachedServo((Servo) Proxy.newProxyInstance(
+            set(shooter, Shooter.class, "servoHood", (Servo) Proxy.newProxyInstance(
                     Servo.class.getClassLoader(), new Class<?>[]{Servo.class}, (p, m, a) -> {
                         if (m.getName().equals("setPosition")) hoodWrites[0]++;
                         return null;
-                    }), 0.005));
+                    }));
             set(shooter, Shooter.class, "intakeSubsystem", intake);
             shooter.set_alliance(Alliance.RED);
             shooter.set_bypass_enabled(true);

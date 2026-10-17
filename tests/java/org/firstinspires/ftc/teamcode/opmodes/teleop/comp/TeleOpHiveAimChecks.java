@@ -292,11 +292,17 @@ public final class TeleOpHiveAimChecks {
 
     private static final class TestLocalizer implements Localizer {
         MotionState state;
+        Pose reportedPose;
         Pose pendingPose;
         boolean hasPendingPose;
         TestLocalizer(Pose pose) { setPose(pose); }
         void pose_on_next_update(Pose pose) { pendingPose = pose; hasPendingPose = true; }
-        @Override public void setPose(Pose pose) { state = MotionState.zero().withPose(pose); }
+        @Override public void setPose(Pose pose) {
+            reportedPose = pose;
+            // Inject a missing sample at the Localizer boundary; MotionState rejects null poses.
+            state = pose == null ? MotionState.zero() : MotionState.zero().withPose(pose);
+        }
+        @Override public Pose pose() { return reportedPose; }
         @Override public MotionState state() { return state; }
         @Override public void update() {
             if (hasPendingPose) {
@@ -304,7 +310,7 @@ public final class TeleOpHiveAimChecks {
                 hasPendingPose = false;
             }
         }
-        @Override public void reset() { state = MotionState.zero(); }
+        @Override public void reset() { state = MotionState.zero(); reportedPose = state.pose(); }
     }
 
     private static final class TestDrivetrain implements Drivetrain {

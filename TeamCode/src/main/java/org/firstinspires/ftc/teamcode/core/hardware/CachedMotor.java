@@ -2,7 +2,7 @@ package org.firstinspires.ftc.teamcode.core.hardware;
 
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 
-/** Wraps a DcMotorEx and only sends motor.setPower() to the hub when the value changed. */
+/** Adds a power deadband and invalid-command handling above the SDK's own duplicate cache. */
 public final class CachedMotor {
     private final DcMotorEx motor;
     private final double eps;
@@ -56,7 +56,7 @@ public final class CachedMotor {
 
     public synchronized double get_power() { return last; }
 
-/** Forces the next set_power() to hit the hardware. Call after setMode()/direction changes. */
+    /** Forward the next set_power() to the SDK after mode/direction changes; SDK caching still applies. */
     public synchronized void invalidate() {
         initialized = false;
     }

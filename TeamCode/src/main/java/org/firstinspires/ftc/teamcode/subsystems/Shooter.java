@@ -5,7 +5,6 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
-import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.units.Units;
 
@@ -51,7 +50,7 @@ public class Shooter {
 
     private CachedMotor shooterMotorLeft;
     private CachedMotor shooterMotorRight;
-    private CachedServo servoHood;
+    private Servo servoHood;
     private Units.Alliance alliance;
     private Intake intakeSubsystem;
     private static final double K_P = 0.0002;
@@ -100,7 +99,7 @@ public class Shooter {
         shooterMotorRight.set_power(0);
         shooterMotorRight.raw().setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         shooterMotorRight.invalidate();
-        servoHood = new CachedServo(hardwareMap.get(Servo.class, "servoHood"), HOOD_POSITION_EPSILON);
+        servoHood = hardwareMap.get(Servo.class, "servoHood");
         fixedHoodAngle = DEFAULT_HOOD_ANGLE_DEG;
         targetHoodAngle = fixedHoodAngle;
         hoodMapped = false;
@@ -125,14 +124,6 @@ public class Shooter {
         preparingShot = false;
         shootingActive = false;
         state = State.FLOAT;
-    }
-
-    public double calculate_flywheel_velocity(double distanceToNearestHive) {
-        return calculate_rpm(distanceToNearestHive, DISTANCE_A, DISTANCE_B, DISTANCE_C);
-    }
-
-    public double calculate_hood_angle(double distanceInches) {
-        return calculate_hood_angle(distanceInches, HOOD_DISTANCE_A, HOOD_DISTANCE_B, HOOD_DISTANCE_C);
     }
 
     /** A matched RPM/hood pair fitted from minimum-RPM successful shots at each distance. */
@@ -207,15 +198,13 @@ public class Shooter {
         mappedHoodAngle = targetHoodAngle;
         hoodMapped = true;
         double position = hood_position_validated(targetHoodAngle);
-        hoodTargetValid = HOOD_CONFIG_VALID;
+        hoodTargetValid = HOOD_CONFIG_VALID && SensorReadings.is_valid(position);
         if (hoodTargetValid && (!hoodCommanded
                 || Math.abs(position - commandedHoodPosition) >= HOOD_POSITION_EPSILON)) {
-            hoodTargetValid = servoHood.set_position(position);
-            if (hoodTargetValid) {
-                commandedHoodPosition = position;
-                hoodCommanded = true;
-                lastHoodCommandNanos = System.nanoTime();
-            }
+            servoHood.setPosition(Math.max(0, Math.min(1, position)));
+            commandedHoodPosition = position;
+            hoodCommanded = true;
+            lastHoodCommandNanos = System.nanoTime();
         }
     }
 
@@ -329,7 +318,6 @@ public class Shooter {
     public double get_target_rpm() { return targetRpm; }
     public double get_fixed_rpm() { return fixedRpm; }
     public double get_target_distance() { return targetDistance; }
-    public boolean distance_valid() { return targetHive.valid; }
     public HiveDistance get_target_hive() { return targetHive; }
     public boolean target_available() { return targetAvailable; }
     public double get_target_hood_angle() { return targetHoodAngle; }
@@ -428,13 +416,6 @@ public class Shooter {
         if (shooterMotorLeft != null) shooterMotorLeft.set_power(0);
         if (shooterMotorRight != null) shooterMotorRight.set_power(0);
         if (intakeSubsystem != null) intakeSubsystem.stop();
-    }
-
-    /** Original competition PIDF, kept separate from the tuner's hub velocity controller. */
-    public void set_flywheel_velocity(double targetVelocity, double currentVelocityTicksPerSec) {
-        motorControlValid = regulate_flywheel(targetVelocity, currentVelocityTicksPerSec,
-                SensorReadings.are_valid(targetVelocity, currentVelocityTicksPerSec)
-                        && targetVelocity >= 0 && targetVelocity <= MAX_RPM);
     }
 
     private boolean regulate_flywheel(double targetVelocity, double currentVelocityTicksPerSec, boolean valid) {

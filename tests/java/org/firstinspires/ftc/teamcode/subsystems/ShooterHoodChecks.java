@@ -6,7 +6,6 @@ import com.qualcomm.robotcore.hardware.Servo;
 import java.lang.reflect.Field;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
-import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 
 /** Standalone JVM regression checks; hardware interfaces are replaced with test doubles. */
@@ -79,7 +78,7 @@ public final class ShooterHoodChecks {
                 });
         FakeIntake intake = new FakeIntake();
         Shooter shooter = new Shooter();
-        field(shooter, "servoHood", new CachedServo(servo, Shooter.HOOD_POSITION_EPSILON));
+        field(shooter, "servoHood", servo);
         field(shooter, "shooterMotorLeft", new CachedMotor(motor, 0.002));
         DcMotorEx motor2 = (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(), new Class<?>[]{DcMotorEx.class},
                 (proxy, method, values) -> {
@@ -100,6 +99,14 @@ public final class ShooterHoodChecks {
         int originalWrites = writes[0];
         shooter.set_hood_angle(Shooter.DEFAULT_HOOD_ANGLE_DEG);
         check(writes[0] == originalWrites && shooter.hood_ready(), "unchanged target neither writes nor restarts delay");
+        shooter.adjust_hood_angle(0.1);
+        shooter.adjust_hood_angle(0.1);
+        check(writes[0] == originalWrites && shooter.hood_ready(), "sub-deadband changes retain applied position and settling");
+        shooter.adjust_hood_angle(0.3);
+        check(writes[0] == originalWrites + 1 && !shooter.hood_ready(), "cumulative changes cross the deadband and restart settling");
+        shooter.set_hood_angle(Shooter.DEFAULT_HOOD_ANGLE_DEG);
+        elapsed(shooter);
+        originalWrites = writes[0];
         shooter.adjust_hood_angle(1);
         check(writes[0] == originalWrites + 1, "INIT setter immediately writes servo");
         check(!shooter.hood_ready(), "movement restarts delay");

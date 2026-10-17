@@ -11,7 +11,6 @@ import com.qualcomm.robotcore.hardware.Servo;
 
 import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
-import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
@@ -51,7 +50,7 @@ public class ShooterPidfTuner extends LinearOpMode {
 
     private CachedMotor shooterMotorLeft;
     private CachedMotor shooterMotorRight;
-    private CachedServo hoodServo;
+    private Servo hoodServo;
     private Follower follower;
     private Alliance alliance;
     private double targetRpm = DEFAULT_TARGET_RPM;
@@ -108,7 +107,7 @@ public class ShooterPidfTuner extends LinearOpMode {
             shooterMotorRight.set_power(0.0);
             shooterMotorRight.raw().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             shooterMotorRight.raw().setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-            hoodServo = new CachedServo(hardwareMap.get(Servo.class, "servoHood"), Shooter.HOOD_POSITION_EPSILON);
+            hoodServo = hardwareMap.get(Servo.class, "servoHood");
             command_hood();
             apply_pidf();
 
@@ -211,11 +210,12 @@ public class ShooterPidfTuner extends LinearOpMode {
         }
     }
 
-    /** Track the angle actually sent, including the servo cache's deadband. */
+    /** Track the angle actually sent, including the hood's command deadband. */
     private boolean command_hood() {
         hoodPosition = Shooter.hood_angle_to_servo_position(commandedHoodAngle);
-        if (!hoodServo.set_position(hoodPosition)) return false;
+        if (!SensorReadings.is_valid(hoodPosition)) return false;
         if (!hoodCommanded || Math.abs(hoodPosition - appliedHoodPosition) >= Shooter.HOOD_POSITION_EPSILON) {
+            hoodServo.setPosition(Math.max(0, Math.min(1, hoodPosition)));
             appliedHoodPosition = hoodPosition;
             hoodCommanded = true;
             appliedHoodAngle = Math.max(Shooter.HOOD_MIN_ANGLE_DEG,

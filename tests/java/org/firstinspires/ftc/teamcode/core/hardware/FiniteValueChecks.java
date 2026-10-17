@@ -1,7 +1,6 @@
 package org.firstinspires.ftc.teamcode.core.hardware;
 
 import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.Servo;
 import java.lang.reflect.Proxy;
 
 /** Standalone fault-injection checks with SDK hardware test doubles. */
@@ -16,7 +15,6 @@ public final class FiniteValueChecks {
             check(!SensorReadings.are_valid(1, invalid, 2), "reject whole invalid sample");
             check_sample(invalid);
             check_motor(invalid);
-            check_servo(invalid);
         }
         check_velocity_sampling();
         System.out.println("Passed " + checks + " finite-value boundary checks");
@@ -84,37 +82,6 @@ public final class FiniteValueChecks {
         motor.set_power(0);
         close(hardware.power, 0);
         check(hardware.invalidWrites == 0, "motor hardware never receives nonfinite commands");
-    }
-
-    private static void check_servo(double invalid) {
-        double[] position = {Double.NaN};
-        int[] writes = {0};
-        Servo servo = (Servo) Proxy.newProxyInstance(Servo.class.getClassLoader(), new Class<?>[]{Servo.class},
-                (proxy, method, values) -> {
-                    if (method.getName().equals("setPosition")) {
-                        position[0] = (double) values[0];
-                        writes[0]++;
-                    }
-                    return null;
-                });
-        CachedServo cached = new CachedServo(servo, 0.002);
-        check(!cached.set_position(invalid) && writes[0] == 0, "invalid first servo command sends nothing");
-        check(cached.set_position(0.4), "finite servo command accepted after fault");
-        close(position[0], 0.4);
-        check(!cached.set_position(invalid) && writes[0] == 1, "invalid servo command holds position");
-        close(position[0], 0.4);
-        check(cached.set_position(0.4001) && writes[0] == 1, "invalid command does not poison servo cache");
-        check(cached.set_position(0.7), "servo recovers");
-        close(position[0], 0.7);
-        check(cached.set_position(Double.MAX_VALUE), "huge finite servo command accepted");
-        close(position[0], 1);
-        check(cached.set_position(-Double.MAX_VALUE), "negative finite servo command accepted");
-        close(position[0], 0);
-        int beforeInvalid = writes[0];
-        cached.invalidate();
-        check(!cached.set_position(invalid) && writes[0] == beforeInvalid, "invalid servo command after cache reset held");
-        check(cached.set_position(0.5) && writes[0] == beforeInvalid + 1, "finite servo command after reset written");
-        close(position[0], 0.5);
     }
 
     private static void check_velocity_sampling() {

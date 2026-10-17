@@ -76,7 +76,6 @@ public class Main extends AbstractTeleOp {
     @Override
     protected void on_start() {
         ignoreConfigUntilReleased = gamepad2.x || gamepad2.left_bumper || gamepad2.right_bumper;
-        robot.start_robot();
     }
 
     @Override

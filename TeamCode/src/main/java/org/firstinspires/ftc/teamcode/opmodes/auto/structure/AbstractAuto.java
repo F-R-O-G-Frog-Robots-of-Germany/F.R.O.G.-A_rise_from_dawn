@@ -63,7 +63,7 @@ abstract class General extends LinearOpMode {
             shooterSubsystem.init(hardwareMap, intakeSubsystem, alliance);
             actions.clear();
             build_autonomous();
-            telemetry.setMsTransmissionInterval(100);
+            telemetry.setMsTransmissionInterval(200);
             while (opModeInInit()) {
                 shooterSelection.update(gamepad2, shooterSubsystem, telemetry);
                 if (CompConfig.init_telemetry_enabled()) {
