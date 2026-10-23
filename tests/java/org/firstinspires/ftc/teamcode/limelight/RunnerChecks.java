@@ -46,6 +46,7 @@ public final class RunnerChecks {
 
     private static Butine.Params params() {
         Butine.Params params = new Butine.Params();
+        params.field = ButineField.unrestricted();
         params.capacity = 1;
         params.lookaheadRuns = 1;
         params.iterationCap = 0;

@@ -49,6 +49,7 @@ public final class PlannerAuditChecks {
 
     private static Butine.Params fast_settings() {
         Butine.Params p = new Butine.Params();
+        p.field = ButineField.unrestricted();
         p.iterationCap = 0; p.localSearchPasses = 0; p.candidateCap = 30;
         return p;
     }

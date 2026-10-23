@@ -58,7 +58,7 @@ public final class ButineRegression {
     }
 
     private static void test_exact_short_run() {
-        Butine.Params p = new Butine.Params();
+        Butine.Params p = new Butine.Params(); p.field = ButineField.unrestricted();
         p.capacity = 3; p.lookaheadRuns = 1; p.iterationCap = 0; p.localSearchPasses = 0;
         VisionPose depot = new VisionPose(0, 0, 0);
         List<Pollen> items = Arrays.asList(pollen(1, 34, 3), pollen(2, -12, 29), pollen(3, 7, -22));
@@ -76,7 +76,7 @@ public final class ButineRegression {
     }
 
     private static void test_filtering_and_deadlines() {
-        Butine.Params p = new Butine.Params();
+        Butine.Params p = new Butine.Params(); p.field = ButineField.unrestricted();
         p.iterationCap = 0; p.localSearchPasses = 0; p.minConfidence = .5;
         VisionPose depot = new VisionPose(0, 0, 0);
         check(Butine.solve(Collections.<Pollen>emptyList(), depot, p).runCount == 0, "empty map");
@@ -113,7 +113,7 @@ public final class ButineRegression {
     }
 
     private static void test_live_start() {
-        Butine.Params p = new Butine.Params();
+        Butine.Params p = new Butine.Params(); p.field = ButineField.unrestricted();
         p.iterationCap = 0; p.localSearchPasses = 0; p.capacity = 2; p.lookaheadRuns = 2;
         p.remainingS = 100;
         VisionPose start = new VisionPose(65, 45, .7), depot = new VisionPose(5, 8, -1.2);
@@ -128,7 +128,7 @@ public final class ButineRegression {
     }
 
     private static void test_reproducibility() {
-        Butine.Params p = new Butine.Params();
+        Butine.Params p = new Butine.Params(); p.field = ButineField.unrestricted();
         p.iterationCap = 8; p.stagnationLimit = 8;
         p.localSearchPasses = 2; p.capacity = 3; p.lookaheadRuns = 3; p.remainingS = 100;
         Random random = new Random(70);
@@ -152,7 +152,7 @@ public final class ButineRegression {
     private static void test_generated_fields() {
         Random random = new Random(1537);
         for (int field = 0; field < 80; ++field) {
-            Butine.Params p = new Butine.Params();
+            Butine.Params p = new Butine.Params(); p.field = ButineField.unrestricted();
             p.iterationCap = field % 4 == 0 ? 3 : 0;
             p.stagnationLimit = 3; p.localSearchPasses = field % 4 == 0 ? 1 : 0;
             p.capacity = field % 3 == 0 ? 0 : 2 + field % 4;

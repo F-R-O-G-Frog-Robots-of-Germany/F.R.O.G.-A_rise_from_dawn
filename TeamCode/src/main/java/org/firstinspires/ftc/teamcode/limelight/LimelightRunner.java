@@ -197,7 +197,11 @@ public final class LimelightRunner {
             return;
         }
         drive.set_pose(fix);
-        if (worker != null) worker.submit_pose(fix);
+        synchronized (map) {
+            if (worker != null) worker.submit_pose(null);
+            map.clear();
+            if (worker != null) worker.submit_pose(fix);
+        }
         stats.applied++;
         stats.lastJumpIn = jump;
         lastFix = "applied " + jump + " in correction";
@@ -225,6 +229,16 @@ public final class LimelightRunner {
     public boolean is_busy() { return state != State.IDLE; }
     public Stats stats() { return stats; }
     public String last_fix() { return lastFix; }
+
+    /** Cancel an in-flight correction without applying a later fix; async SDK work stays on its owner. */
+    public void cancel() {
+        if (state == State.IDLE) return;
+        state = State.IDLE;
+        lastFix = "cancelled";
+        if (worker != null) {
+            if (worker.request_pipeline(Limelight.DETECTOR_PIPELINE) == 0) worker.request_stop();
+        } else if (!camera.set_pipeline(Limelight.DETECTOR_PIPELINE)) camera.stop();
+    }
 
     public void stop() {
         state = State.IDLE;

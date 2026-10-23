@@ -1,0 +1,1042 @@
+{
+  "schemaVersion": 2,
+  "config": {
+    "alliance": "RED",
+    "eligibleHalf": "x < 72",
+    "capacity": 4,
+    "productionDefaultCapacity": 4,
+    "seed": 20261019,
+    "remainingSeconds": 150.0,
+    "scoreOverheadSeconds": 2.0,
+    "fieldSizeIn": 144.0,
+    "robotLengthIn": 18.0,
+    "robotWidthIn": 18.0,
+    "bodyClearanceIn": 1.0,
+    "fieldReserveIn": 0.0,
+    "trackingReserveIn": 0.0,
+    "radiusIn": 13.727922061357855,
+    "intakeWidthIn": 18.0,
+    "intakeForwardOffsetIn": 9.0,
+    "intakeOvershootIn": 1.0,
+    "pollenRadiusIn": 1.4,
+    "sweepIntake": true,
+    "continuousCollection": true,
+    "kinematics": {
+      "cruiseSpeedInS": 72.0,
+      "accelInS2": 162.0,
+      "decelInS2": 173.0,
+      "omegaMaxRadS": 4.0,
+      "turnSettleS": 0.08,
+      "turnDeadbandRad": 0.09,
+      "turnCoupling": 0.67,
+      "pickupDwellS": 0.0,
+      "junctionDeviationIn": 0.25
+    }
+  },
+  "start": {
+    "x": 59.25,
+    "y": 18.0,
+    "heading": 1.5707963267948966
+  },
+  "depot": {
+    "x": 59.25,
+    "y": 18.0,
+    "heading": 1.5707963267948966
+  },
+  "obstacles": [
+    {
+      "index": 0,
+      "physical": {
+        "minX": 47.2,
+        "maxX": 53.9,
+        "minY": 52.5,
+        "maxY": 91.5
+      },
+      "exclusion": {
+        "minX": 33.472077938642144,
+        "maxX": 67.62792206135785,
+        "minY": 38.77207793864214,
+        "maxY": 105.22792206135786
+      }
+    },
+    {
+      "index": 1,
+      "physical": {
+        "minX": 90.1,
+        "maxX": 96.8,
+        "minY": 52.5,
+        "maxY": 91.5
+      },
+      "exclusion": {
+        "minX": 76.37207793864214,
+        "maxX": 110.52792206135786,
+        "minY": 38.77207793864214,
+        "maxY": 105.22792206135786
+      }
+    },
+    {
+      "index": 2,
+      "physical": {
+        "minX": 45.2,
+        "maxX": 52.0,
+        "minY": 136.4,
+        "maxY": 143.8
+      },
+      "exclusion": {
+        "minX": 31.472077938642148,
+        "maxX": 65.72792206135786,
+        "minY": 122.67207793864215,
+        "maxY": 157.52792206135786
+      }
+    },
+    {
+      "index": 3,
+      "physical": {
+        "minX": 136.4,
+        "maxX": 143.8,
+        "minY": 92.0,
+        "maxY": 98.8
+      },
+      "exclusion": {
+        "minX": 122.67207793864215,
+        "maxX": 157.52792206135786,
+        "minY": 78.27207793864214,
+        "maxY": 112.52792206135786
+      }
+    },
+    {
+      "index": 4,
+      "physical": {
+        "minX": 92.0,
+        "maxX": 98.8,
+        "minY": 0.2,
+        "maxY": 7.6
+      },
+      "exclusion": {
+        "minX": 78.27207793864214,
+        "maxX": 112.52792206135786,
+        "minY": -13.527922061357856,
+        "maxY": 21.327922061357853
+      }
+    },
+    {
+      "index": 5,
+      "physical": {
+        "minX": 0.2,
+        "maxX": 7.6,
+        "minY": 45.2,
+        "maxY": 52.0
+      },
+      "exclusion": {
+        "minX": -13.527922061357856,
+        "maxX": 21.327922061357853,
+        "minY": 31.472077938642148,
+        "maxY": 65.72792206135786
+      }
+    }
+  ],
+  "eligiblePollen": [
+    {
+      "id": 1,
+      "x": 69.221853,
+      "y": 38.457746,
+      "heading": 0.0
+    },
+    {
+      "id": 2,
+      "x": 15.388649,
+      "y": 29.821966,
+      "heading": 0.0
+    },
+    {
+      "id": 3,
+      "x": 32.149426,
+      "y": 22.956563,
+      "heading": 0.0
+    },
+    {
+      "id": 4,
+      "x": 62.939444,
+      "y": 16.052464,
+      "heading": 0.0
+    },
+    {
+      "id": 5,
+      "x": 33.308621,
+      "y": 108.663984,
+      "heading": 0.0
+    },
+    {
+      "id": 6,
+      "x": 47.151952,
+      "y": 119.522846,
+      "heading": 0.0
+    },
+    {
+      "id": 7,
+      "x": 35.170849,
+      "y": 18.186538,
+      "heading": 0.0
+    },
+    {
+      "id": 8,
+      "x": 47.714667,
+      "y": 13.778312,
+      "heading": 0.0
+    },
+    {
+      "id": 9,
+      "x": 55.56988,
+      "y": 114.629672,
+      "heading": 0.0
+    },
+    {
+      "id": 10,
+      "x": 32.788719,
+      "y": 81.192366,
+      "heading": 0.0
+    },
+    {
+      "id": 11,
+      "x": 29.284944,
+      "y": 49.125175,
+      "heading": 0.0
+    },
+    {
+      "id": 12,
+      "x": 28.350921,
+      "y": 26.321159,
+      "heading": 0.0
+    },
+    {
+      "id": 13,
+      "x": 26.249866,
+      "y": 19.44938,
+      "heading": 0.0
+    },
+    {
+      "id": 14,
+      "x": 68.833792,
+      "y": 58.909209,
+      "heading": 0.0
+    },
+    {
+      "id": 15,
+      "x": 32.214732,
+      "y": 75.131851,
+      "heading": 0.0
+    },
+    {
+      "id": 16,
+      "x": 52.288713,
+      "y": 107.673712,
+      "heading": 0.0
+    },
+    {
+      "id": 17,
+      "x": 29.481535,
+      "y": 116.91383,
+      "heading": 0.0
+    },
+    {
+      "id": 18,
+      "x": 68.238506,
+      "y": 48.661978,
+      "heading": 0.0
+    },
+    {
+      "id": 19,
+      "x": 68.903181,
+      "y": 70.929425,
+      "heading": 0.0
+    },
+    {
+      "id": 20,
+      "x": 19.478501,
+      "y": 87.134818,
+      "heading": 0.0
+    }
+  ],
+  "runs": [
+    {
+      "runId": 1,
+      "start": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "depot": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "pickupIds": [
+        8,
+        7,
+        3,
+        12
+      ],
+      "pickupCount": 4,
+      "collectionHeading": 3.141592653589793,
+      "intakeOvershootIn": 1.0,
+      "travelTimeS": 2.034733715475037,
+      "scoreOverheadS": 2.0,
+      "committedTimeS": 4.034733715475037,
+      "cumulativeTimeS": 4.034733715475037,
+      "remainingBeforeS": 150.0,
+      "remainingAfterS": 145.96526628452497,
+      "solveUs": 73129.0,
+      "candidatesConsidered": 20,
+      "legs": [
+        {
+          "kind": "ALIGNMENT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 0.47269908169872416,
+          "swingDeg": 90.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 0.0
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 8,
+          "pollenIds": [
+            8,
+            7,
+            3,
+            12
+          ],
+          "contactFractions": [
+            0.05296911030801193,
+            0.6382025874690076,
+            0.7791674745762829,
+            0.9563872245091524
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 37.816130459845105,
+            "y": 26.144389836160954,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 0.7403719893184358,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 0.0
+        },
+        {
+          "kind": "DEPOT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 37.816130459845105,
+            "y": 26.144389836160954,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.8216626444578773,
+          "swingDeg": 90.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 0.0
+        }
+      ]
+    },
+    {
+      "runId": 2,
+      "start": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "depot": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "pickupIds": [
+        1,
+        18,
+        14,
+        19
+      ],
+      "pickupCount": 4,
+      "collectionHeading": 1.5707963267948966,
+      "intakeOvershootIn": 1.0,
+      "travelTimeS": 2.223946729562167,
+      "scoreOverheadS": 2.0,
+      "committedTimeS": 4.223946729562167,
+      "cumulativeTimeS": 8.258680445037204,
+      "remainingBeforeS": 145.96526628452497,
+      "remainingAfterS": 141.74131955496279,
+      "solveUs": 9227.9,
+      "candidatesConsidered": 16,
+      "legs": [
+        {
+          "kind": "PICKUP",
+          "pollenId": 1,
+          "pollenIds": [
+            1,
+            18
+          ],
+          "contactFractions": [
+            0.4961378912631432,
+            0.9995017807906663
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.5539569535976971,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 47.008467018944756
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 14,
+          "pollenIds": [
+            14,
+            19
+          ],
+          "contactFractions": [
+            0.44017777248313333,
+            0.9570249117776766
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 68.8900552884525,
+            "y": 61.52888848499957,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.5579563711266347,
+          "swingDeg": 0.0,
+          "startSpeedInS": 47.008467018944756,
+          "endSpeedInS": 0.000653250982141784
+        },
+        {
+          "kind": "RETURN",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 68.8900552884525,
+            "y": 61.52888848499957,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.5702725720229376,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.000653250982141784,
+          "endSpeedInS": 47.008467018944756
+        },
+        {
+          "kind": "DEPOT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.5417608328148977,
+          "swingDeg": 0.0,
+          "startSpeedInS": 47.008467018944756,
+          "endSpeedInS": 0.0
+        }
+      ]
+    },
+    {
+      "runId": 3,
+      "start": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "depot": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "pickupIds": [
+        11,
+        15,
+        10,
+        5
+      ],
+      "pickupCount": 4,
+      "collectionHeading": 1.5707963267948966,
+      "intakeOvershootIn": 1.0,
+      "travelTimeS": 3.9483596013737206,
+      "scoreOverheadS": 2.0,
+      "committedTimeS": 5.9483596013737206,
+      "cumulativeTimeS": 14.207040046410924,
+      "remainingBeforeS": 141.74131955496279,
+      "remainingAfterS": 135.79295995358908,
+      "solveUs": 11531.2,
+      "candidatesConsidered": 12,
+      "legs": [
+        {
+          "kind": "TRANSIT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": true,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 32.972077938642144,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.7972007449730694,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 18.702787341175988
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 11,
+          "pollenIds": [
+            11,
+            15,
+            10,
+            5
+          ],
+          "contactFractions": [
+            0.007428808217948043,
+            0.43382444144348165,
+            0.5331903554533247,
+            0.983604624191089
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 32.972077938642144,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 33.30642816563803,
+            "y": 99.26396897483453,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 1.176979163514716,
+          "swingDeg": 0.0,
+          "startSpeedInS": 18.702787341175988,
+          "endSpeedInS": 0.0005493164082963631
+        },
+        {
+          "kind": "RETURN",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 33.30642816563803,
+            "y": 99.26396897483453,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 32.972077938642144,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 1.1833662406526437,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.0005493164082963631,
+          "endSpeedInS": 18.702787341175988
+        },
+        {
+          "kind": "DEPOT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 32.972077938642144,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.7908134522332919,
+          "swingDeg": 0.0,
+          "startSpeedInS": 18.702787341175988,
+          "endSpeedInS": 0.0
+        }
+      ]
+    },
+    {
+      "runId": 4,
+      "start": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "depot": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "pickupIds": [
+        9,
+        6,
+        17,
+        20
+      ],
+      "pickupCount": 4,
+      "collectionHeading": 1.5707963267948966,
+      "intakeOvershootIn": 1.0,
+      "travelTimeS": 4.653217485894452,
+      "scoreOverheadS": 2.0,
+      "committedTimeS": 6.653217485894452,
+      "cumulativeTimeS": 20.860257532305376,
+      "remainingBeforeS": 135.79295995358908,
+      "remainingAfterS": 129.13974246769462,
+      "solveUs": 6565.6,
+      "candidatesConsidered": 8,
+      "legs": [
+        {
+          "kind": "TRANSIT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": true,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.5614307621363507,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 43.21838950127096
+        },
+        {
+          "kind": "TRANSIT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": true,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 105.72792206135786,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 1.116660510625048,
+          "swingDeg": 0.0,
+          "startSpeedInS": 43.21838950127096,
+          "endSpeedInS": 12.050893486630324
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 9,
+          "pollenIds": [
+            9,
+            6
+          ],
+          "contactFractions": [
+            0.14566961492142702,
+            0.9384031120262214
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 105.72792206135786,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 52.30156566935235,
+            "y": 109.34568919696736,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.40180937690859575,
+          "swingDeg": 0.0,
+          "startSpeedInS": 12.050893486630324,
+          "endSpeedInS": 43.5432799483003
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 17,
+          "pollenIds": [
+            17
+          ],
+          "contactFractions": [
+            0.6624921590638959
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 52.30156566935235,
+            "y": 109.34568919696736,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 32.972077938642144,
+            "y": 105.72792206135786,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.4205450854002505,
+          "swingDeg": 0.0,
+          "startSpeedInS": 43.5432799483003,
+          "endSpeedInS": 18.443706668194928
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 20,
+          "pollenIds": [
+            20
+          ],
+          "contactFractions": [
+            0.9668405277840364
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 32.972077938642144,
+            "y": 105.72792206135786,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 19.723823740461818,
+            "y": 78.63648008240864,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.6398322764761593,
+          "swingDeg": 0.0,
+          "startSpeedInS": 18.443706668194928,
+          "endSpeedInS": 22.582984941246696
+        },
+        {
+          "kind": "RETURN",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 19.723823740461818,
+            "y": 78.63648008240864,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 32.972077938642144,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.7668596407621002,
+          "swingDeg": 0.0,
+          "startSpeedInS": 22.582984941246696,
+          "endSpeedInS": 29.60840860035243
+        },
+        {
+          "kind": "DEPOT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 32.972077938642144,
+            "y": 38.27207793864214,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.7460798335859481,
+          "swingDeg": 0.0,
+          "startSpeedInS": 29.60840860035243,
+          "endSpeedInS": 0.0
+        }
+      ]
+    },
+    {
+      "runId": 5,
+      "start": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "depot": {
+        "x": 59.25,
+        "y": 18.0,
+        "heading": 1.5707963267948966
+      },
+      "pickupIds": [
+        13,
+        2,
+        4,
+        16
+      ],
+      "pickupCount": 4,
+      "collectionHeading": 3.141592653589793,
+      "intakeOvershootIn": 1.0,
+      "travelTimeS": 6.445264853559143,
+      "scoreOverheadS": 2.0,
+      "committedTimeS": 8.445264853559143,
+      "cumulativeTimeS": 29.30552238586452,
+      "remainingBeforeS": 129.13974246769462,
+      "remainingAfterS": 120.69447761413548,
+      "solveUs": 2941.0,
+      "candidatesConsidered": 4,
+      "legs": [
+        {
+          "kind": "ALIGNMENT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 0.47269908169872416,
+          "swingDeg": 90.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 0.0
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 13,
+          "pollenIds": [
+            13,
+            2
+          ],
+          "contactFractions": [
+            0.6568206498906137,
+            0.9724768140772057
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 24.841620781466283,
+            "y": 29.66835700763898,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 0.9293640158175488,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 0.9711517579481316
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 4,
+          "pollenIds": [
+            4
+          ],
+          "contactFractions": [
+            0.9794108061725718
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 24.841620781466283,
+            "y": 29.66835700763898,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 71.5001045663407,
+            "y": 16.179476212326364,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 1.0574841901973637,
+          "swingDeg": 0.0,
+          "startSpeedInS": 0.9711517579481316,
+          "endSpeedInS": 7.568263746164472
+        },
+        {
+          "kind": "TRANSIT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": true,
+          "from": {
+            "x": 71.5001045663407,
+            "y": 16.179476212326364,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 105.72792206135786,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 1.5617983388361734,
+          "swingDeg": 0.0,
+          "startSpeedInS": 7.568263746164472,
+          "endSpeedInS": 13.106370320019375
+        },
+        {
+          "kind": "PICKUP",
+          "pollenId": 16,
+          "pollenIds": [
+            16
+          ],
+          "contactFractions": [
+            0.8497383837059375
+          ],
+          "intakeOn": true,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 105.72792206135786,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 61.72688244062659,
+            "y": 107.54905055430609,
+            "heading": 3.141592653589793
+          },
+          "predictedS": 0.33355143721212904,
+          "swingDeg": 0.0,
+          "startSpeedInS": 13.106370320019375,
+          "endSpeedInS": 0.0
+        },
+        {
+          "kind": "RETURN",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 61.72688244062659,
+            "y": 107.54905055430609,
+            "heading": 3.141592653589793
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 105.72792206135786,
+            "heading": 3.032973033179719
+          },
+          "predictedS": 0.3393792005383265,
+          "swingDeg": 6.223445821810322,
+          "startSpeedInS": 0.0,
+          "endSpeedInS": 12.649378492840839
+        },
+        {
+          "kind": "RETURN",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 105.72792206135786,
+            "heading": 3.032973033179719
+          },
+          "target": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.9320019357623959
+          },
+          "predictedS": 1.1211376560839437,
+          "swingDeg": 63.08099724789924,
+          "startSpeedInS": 12.649378492840839,
+          "endSpeedInS": 43.21838950127096
+        },
+        {
+          "kind": "DEPOT",
+          "pollenId": -1,
+          "pollenIds": [],
+          "contactFractions": [],
+          "intakeOn": false,
+          "from": {
+            "x": 68.12792206135785,
+            "y": 38.27207793864214,
+            "heading": 1.9320019357623959
+          },
+          "target": {
+            "x": 59.25,
+            "y": 18.0,
+            "heading": 1.5707963267948966
+          },
+          "predictedS": 0.6298509331749349,
+          "swingDeg": 20.695556930290486,
+          "startSpeedInS": 43.21838950127096,
+          "endSpeedInS": 0.0
+        }
+      ]
+    }
+  ],
+  "uncollectedIds": [],
+  "diagnostics": {
+    "solveCount": 5,
+    "stopReason": "all eligible pollen collected",
+    "totalCollected": 20,
+    "eligibleCount": 20,
+    "totalCommittedTimeS": 29.30552238586452,
+    "remainingS": 120.69447761413548,
+    "totalSolveUs": 103394.7,
+    "allSegmentsClear": true,
+    "legTimingMatches": true,
+    "recedingHorizon": true,
+    "solverWallTimeDeducted": false
+  }
+}

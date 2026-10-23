@@ -1,0 +1,59 @@
+{
+  "units": "inches",
+  "field_coordinates": "+X audience-right, +Y away from audience, +Z above tile top; field center is (0,0,0)",
+  "robot_height": 18,
+  "vertical_safety_allowance": 1,
+  "fixed_collision_slice": [0,19],
+  "frame_supports_exact": {
+    "left": {"x": [-24.73886093221311,-18.184374366040338], "y": [-19.475972314440074,19.47597257268003]},
+    "right": {"x": [18.199202632407925,24.753689198580542], "y": [-19.475972572816396,19.475972314303707]}
+  },
+  "frame_supports_outward_rounded_0_1_in": {
+    "left": {"x": [-24.8,-18.1], "y": [-19.5,19.5]},
+    "right": {"x": [18.1,24.8], "y": [-19.5,19.5]}
+  },
+  "frame_supports_0_144_coordinates": {
+    "left": {"x": [47.2,53.9], "y": [52.5,91.5]},
+    "right": {"x": [90.1,96.8], "y": [52.5,91.5]}
+  },
+  "continuous_center_corridor": {
+    "physical_gap": 36.2,
+    "robot_width_length": [18,18],
+    "body_safety_allowance": 1,
+    "heading_aware_center_x_condition": "abs(x) + 9*(abs(cos(heading))+abs(sin(heading))) + 1 < 18.1",
+    "axis_aligned_center_x": [-8.1,8.1],
+    "all_heading_center_x": [-4.372077938642145,4.372077938642145]
+  },
+  "above_floor_foot_bars": {
+    "orientation": "along field Y, on left and right sides of frame, not across center corridor",
+    "left": {"x": [-24.733426,-22.75], "y": [-19.472321,19.472321], "z": [0,2.147790]},
+    "right": {"x": [22.75,24.733426], "y": [-19.472321,19.472321], "z": [0,2.147790]}
+  },
+  "under_tile_bars": {
+    "excluded_from_above_floor_collisions": true,
+    "x": [-24.5,24.5],
+    "y_positive": [15.78125,17.28125],
+    "y_negative": [-17.28125,-15.78125],
+    "z": [-0.743110,-0.625]
+  },
+  "fixed_overhead_minima": {"acm_panels": 34.072492, "top_bar": 40.949700},
+  "moving_hive": {
+    "nominal_stable_tilt_degrees": [-30,30],
+    "pivot_z": 43.949700,
+    "exact_static_hive_z_min": 30.651541,
+    "exact_static_blue_hive_y": [-25.128859,20.064099],
+    "opposite_stable_pose": "CAD blue hive rotated -60deg around field X; exact Y bounds mirror, Z minimum unchanged",
+    "conservative_continuous_sweep_z_lower_bound": 22.401106982435337,
+    "bound_derivation": "Split allowed 60deg sweep into two 30deg halves, each bounded from nearest exact endpoint AABB. At either endpoint, z>=43.9497-(43.9497-30.651541)*cos(30deg)-20.064099*sin(30deg). This is a guaranteed lower bound, not the actual underside minimum.",
+    "clears_robot_plus_vertical_allowance": true
+  },
+  "provenance": {
+    "step_sha256": "05b35961c7df847741031f00fda73ddd068537f809e92a11b1cd59a94bcc8331",
+    "cad": "https://ftc-resources.firstinspires.org/ftc/field/field-cad-step",
+    "manual": "https://ftc-resources.firstinspires.org/ftc/game/cm-html",
+    "manual_tilt_diagram": "https://ftc-resources.firstinspires.org/ftc/game/cm-html/BIOBUZZ%20Competition%20Manual%20-%20TU05_files/image030.png",
+    "manual_relevance": "Figure 9-10 labels 30deg tilt and nominal 30.6in underside. G409 example D explicitly describes driving under HIVE. Section9.1 specifies nominal field tolerance generally +/-1in.",
+    "method": "OCCT8 read of STEP assembly transforms; exact BREP Boolean common of entire FRAME with above-tile Z[0,19] and left/right half spaces; BRepBndLib.AddOptimal(useTriangulation=False,useShapeTolerance=False). Supports rounded outward to0.1in.",
+    "limitation": "Nominal CAD geometry, not measurement of the user's actual field; not valid for robot extensions above18in without recomputing collision slice. The overhead lower bound follows mechanically allowed nominal +/-30deg stops, not arbitrary360deg rotation."
+  }
+}

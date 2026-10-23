@@ -175,6 +175,8 @@ public final class ButineWorker implements AutoCloseable {
     public Result latest_result() { synchronized (lock) { return latest; } }
     public Stats stats() { synchronized (lock) { return new Stats(this); } }
     public boolean is_running() { return running; }
+    /** A cancelled in-progress solve still owns its thread until it actually terminates. */
+    public boolean has_owner() { synchronized (lock) { return thread != null && thread.isAlive(); } }
     private boolean is_current(long id) { synchronized (lock) { return running && id == requestId; } }
 
     /** Invalidate the current work and result, retaining the sleeping worker for another request. */

@@ -1,6 +1,8 @@
 package org.firstinspires.ftc.teamcode.limelight;
 
 import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -8,9 +10,10 @@ import java.util.Objects;
  * Bounded, receding-horizon pollen planner ported from Ma Douce's butine.cpp.
  * Coordinates are real field inches and radians, in the same frame as the observations.
  * Drive only the first fitting run, score at the depot, then solve against the new map.
- * The planner models pickup as a point; intake and scoring are supplied by the runner.
+ * Physical-field runs model the front intake sweep; unrestricted calibration retains point pickups.
  */
 public final class Butine {
+    public static final int POSSESSION_LIMIT = 4;
     public static final int MAX_CANDIDATES = 30;
     public static final int MAX_RUNS = 3;
     public static final int MAX_RUN_LEN = MAX_CANDIDATES;
@@ -30,6 +33,8 @@ public final class Butine {
         public double turnDeadbandRad = 0.09;
         public double turnCoupling = 0.67;
         public double pickupDwellS = 0.0;
+        /** Continuous corner-speed estimate; this is not an obstacle clearance or tracking guarantee. */
+        public double junctionDeviationIn = 0.25;
 
         public Kinematics() { }
 
@@ -42,12 +47,13 @@ public final class Butine {
             turnDeadbandRad = source.turnDeadbandRad;
             turnCoupling = source.turnCoupling;
             pickupDwellS = source.pickupDwellS;
+            junctionDeviationIn = source.junctionDeviationIn;
         }
     }
 
     public static final class Params {
-        /** Zero or less selects one unbounded tour without intermediate returns. */
-        public int capacity = 5;
+        /** Free-plane calibration permits unbounded tours; physical-field routes carry at most four. */
+        public int capacity = POSSESSION_LIMIT;
         public int lookaheadRuns = 2;
         public double discount = 1.0;
         public double remainingS = 30.0;
@@ -60,6 +66,13 @@ public final class Butine {
         public double minConfidence = 0.0;
         public int seed = 0x9E3779B9;
         public Kinematics kinematics = new Kinematics();
+        /** Immutable actual-field geometry; use unrestricted() explicitly for free-plane calibration. */
+        public ButineField field = ButineField.biobuzz();
+        public boolean sweepIntake = true;
+        public double intakeWidthIn = 18.0;
+        public double intakeForwardOffsetIn = 9.0;
+        public double intakeOvershootIn = 1.0;
+        public double pollenRadiusIn = 1.4;
 
         public Params() { }
 
@@ -77,6 +90,12 @@ public final class Butine {
             minConfidence = source.minConfidence;
             seed = source.seed;
             kinematics = new Kinematics(source.kinematics);
+            field = source.field;
+            sweepIntake = source.sweepIntake;
+            intakeWidthIn = source.intakeWidthIn;
+            intakeForwardOffsetIn = source.intakeForwardOffsetIn;
+            intakeOvershootIn = source.intakeOvershootIn;
+            pollenRadiusIn = source.pollenRadiusIn;
         }
     }
 
@@ -87,8 +106,14 @@ public final class Butine {
         /** Travel, pickup dwell and final heading settle; excludes scoring overhead. */
         public final double timeS;
         public final boolean fits;
+        /** Actual center path and intake contact events; null for legacy point-pickup calibration. */
+        public final ButineIntake.Route route;
 
         public Run(int[] ids, VisionPose[] poses, double timeS, boolean fits) {
+            this(ids, poses, timeS, fits, null);
+        }
+
+        public Run(int[] ids, VisionPose[] poses, double timeS, boolean fits, ButineIntake.Route route) {
             Objects.requireNonNull(ids, "ids");
             Objects.requireNonNull(poses, "poses");
             if (ids.length != poses.length) throw new IllegalArgumentException("Mismatched run arrays");
@@ -104,12 +129,16 @@ public final class Butine {
             this.count = ids.length;
             this.timeS = timeS;
             this.fits = fits;
+            this.route = route;
         }
     }
 
     public static final class Plan {
         public final VisionPose start;
         public final VisionPose depot;
+        public final ButineField field;
+        /** Empty for a normal solve; explains geometric rejection before route optimization. */
+        public final String rejectionReason;
         public final Run[] runs;
         public final int runCount;
         public final int fittingRuns;
@@ -126,6 +155,8 @@ public final class Butine {
                      double committedTimeS, double objective, int iterations, boolean uncapacitated) {
             start = ctx.start;
             depot = ctx.depot;
+            field = ctx.params.field;
+            rejectionReason = ctx.rejectionReason;
             this.runs = runs;
             runCount = runs.length;
             this.fittingRuns = fittingRuns;
@@ -157,10 +188,7 @@ public final class Butine {
 
     public static double wrap_pi(double angle) {
         if (!Double.isFinite(angle)) throw new IllegalArgumentException("Angle must be finite");
-        double wrapped = angle % (2 * Math.PI);
-        if (wrapped > Math.PI) wrapped -= 2 * Math.PI;
-        if (wrapped < -Math.PI) wrapped += 2 * Math.PI;
-        return wrapped;
+        return VisionPose.wrap_pi(angle);
     }
 
     /** Turn overlaps translation; only the portion outlasting the drive adds cost. */
@@ -217,6 +245,54 @@ public final class Butine {
         return finite_time(total + settle_time(angle_difference(depot.heading, heading), k));
     }
 
+    /** Cost the chosen polyline segment by segment; a coincident point preserves its incoming heading. */
+    public static double route_time(double incomingHeading, VisionPose from, ButineField.Route route,
+                                    Kinematics k, double[] outHeading) {
+        require_pose(from);
+        Objects.requireNonNull(route, "route");
+        validate_kinematics(k);
+        if (!Double.isFinite(incomingHeading)) throw new IllegalArgumentException("Incoming heading must be finite");
+        if (outHeading != null && outHeading.length == 0)
+            throw new IllegalArgumentException("Heading output must contain one slot");
+        double[] heading = {incomingHeading};
+        double total = 0;
+        VisionPose previous = from;
+        for (int i = 0; i < route.point_count(); i++) {
+            VisionPose point = route.point(i);
+            total += leg_time(heading[0], previous, point, k, heading);
+            previous = point;
+        }
+        if (outHeading != null) outHeading[0] = heading[0];
+        return finite_time(total);
+    }
+
+    /** Field-aware equivalent; throws on an unreachable leg instead of reporting a finite fictitious cost. */
+    public static double run_time(VisionPose start, VisionPose depot, VisionPose[] poses,
+                                  int count, Kinematics k, ButineField field) {
+        require_pose(start);
+        require_pose(depot);
+        Objects.requireNonNull(poses, "poses");
+        Objects.requireNonNull(field, "field");
+        validate_kinematics(k);
+        if (count < 0 || count > poses.length) throw new IllegalArgumentException("Run count exceeds poses or is negative");
+        if (!field.is_clear(start) || !field.is_clear(depot))
+            throw new IllegalArgumentException("Start or depot is outside the permitted robot-center region");
+        if (count == 0) return 0;
+        double[] heading = {start.heading};
+        double total = 0;
+        VisionPose previous = start;
+        for (int i = 0; i <= count; i++) {
+            VisionPose target = i == count ? depot : poses[i];
+            require_pose(target);
+            ButineField.Route route = field.route(previous, target);
+            if (route == null) throw new IllegalArgumentException("Run contains an unreachable leg");
+            total += route_time(heading[0], previous, route, k, heading);
+            if (i < count) total += k.pickupDwellS;
+            previous = target;
+        }
+        return finite_time(total + settle_time(angle_difference(depot.heading, heading[0]), k));
+    }
+
     public static Plan solve(List<Pollen> pollen, VisionPose depot, Params params) {
         return solve(pollen, depot, depot, params);
     }
@@ -229,13 +305,29 @@ public final class Butine {
         require_pose(depot);
         Params settings = new Params(params);
         validate(settings);
+        if (!settings.field.is_unrestricted()) {
+            settings.capacity = settings.capacity <= 0 ? POSSESSION_LIMIT
+                    : Math.min(settings.capacity, POSSESSION_LIMIT);
+        }
         Context ctx = new Context(start, depot, settings);
         boolean uncapacitated = settings.capacity <= 0;
+        if (!settings.field.is_clear(start) || !settings.field.is_clear(depot)) {
+            ctx.rejectionReason = "start or depot violates robot-envelope clearance";
+            return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, uncapacitated);
+        }
+        if (settings.field.route(start, depot) == null) {
+            ctx.rejectionReason = "no safe route from start to depot";
+            return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, uncapacitated);
+        }
+        if (settings.sweepIntake && !settings.field.is_unrestricted()) return solve_sweep(pollen, ctx);
         select_candidates(pollen, ctx);
         if (ctx.count == 0 || settings.remainingS <= 0) {
             return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, uncapacitated);
         }
-        ctx.build_tables();
+        if (!ctx.build_tables()) {
+            ctx.rejectionReason = "candidate pair has no safe route";
+            return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, uncapacitated);
+        }
         int capacity = uncapacitated ? ctx.count : clamp(settings.capacity, 1, MAX_RUN_LEN);
         double overhead = Math.max(0, settings.scoreOverheadS);
         double[] gamma = {1, clamp(settings.discount, 0, 1), 0};
@@ -285,6 +377,47 @@ public final class Butine {
         return Math.hypot(dx, dy) < DEGENERATE_LEG_IN ? heading : Math.atan2(dy, dx);
     }
 
+    private static Plan solve_sweep(List<Pollen> pollen, Context ctx) {
+        ArrayList<Pollen> available = new ArrayList<>();
+        HashSet<Integer> seen = new HashSet<>();
+        int seeds = 0;
+        for (Pollen item : pollen) {
+            if (item == null || item.position == null || !item.position.is_finite()
+                    || !Double.isFinite(item.confidence) || !seen.add(item.id)) continue;
+            available.add(item);
+            if (item.confidence >= ctx.params.minConfidence) seeds++;
+        }
+        // The live map has at most 64 tracks. Refuse larger snapshots rather than ignore hidden fifth contacts.
+        if (available.size() > 256) {
+            ctx.rejectionReason = "sweep observation bound exceeded";
+            return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, false);
+        }
+        ctx.count = Math.min(seeds, clamp(ctx.params.candidateCap, 1, MAX_CANDIDATES));
+        ArrayList<Run> runs = new ArrayList<>();
+        VisionPose start = ctx.start;
+        double committed = 0, objective = 0;
+        int collected = 0;
+        int horizon = clamp(ctx.params.lookaheadRuns, 1, MAX_RUNS);
+        for (int r = 0; r < horizon && !available.isEmpty(); r++) {
+            double remaining = Math.max(0, ctx.params.remainingS - committed);
+            if (remaining <= 0) break;
+            ButineIntake.Candidate candidate = ButineIntake.plan_run(available, start, ctx.depot, ctx.params, remaining);
+            if (candidate == null || candidate.ids.length == 0) break;
+            Run run = new Run(candidate.ids, candidate.poses, candidate.route.timeS, true, candidate.route);
+            runs.add(run);
+            double seconds = run.timeS + Math.max(0, ctx.params.scoreOverheadS);
+            committed += seconds;
+            objective += Math.pow(clamp(ctx.params.discount, 0, 1), r) * seconds;
+            collected += run.count;
+            HashSet<Integer> removed = new HashSet<>();
+            for (int id : run.ids) removed.add(id);
+            available.removeIf(item -> removed.contains(item.id));
+            start = ctx.depot;
+        }
+        if (runs.isEmpty()) ctx.rejectionReason = "no capacity-safe front-intake sweep fits the remaining time";
+        return new Plan(ctx, runs.toArray(new Run[0]), runs.size(), collected, committed, objective, 0, false);
+    }
+
     private static double coupled_time(double straight, double direction, double incoming, Kinematics k) {
         double swing = Math.abs(angle_difference(direction, incoming));
         if (swing > k.turnDeadbandRad && k.omegaMaxRadS > EPSILON) {
@@ -319,9 +452,17 @@ public final class Butine {
     }
 
     private static void validate(Params p) {
-        double[] finite = {p.discount, p.remainingS, p.scoreOverheadS, p.minConfidence};
+        double[] finite = {p.discount, p.remainingS, p.scoreOverheadS, p.minConfidence,
+                p.intakeWidthIn, p.intakeForwardOffsetIn, p.intakeOvershootIn, p.pollenRadiusIn};
         for (double value : finite) if (!Double.isFinite(value)) throw new IllegalArgumentException("Nonfinite planner setting");
         validate_kinematics(p.kinematics);
+        Objects.requireNonNull(p.field, "field");
+        if (p.intakeWidthIn <= 0 || p.intakeForwardOffsetIn < 0 || p.intakeOvershootIn < 0 || p.pollenRadiusIn <= 0)
+            throw new IllegalArgumentException("Positive intake width/pollen radius and nonnegative front offset/overshoot required");
+        if (p.sweepIntake && !p.field.is_unrestricted()
+                && Math.hypot(p.intakeForwardOffsetIn, p.intakeWidthIn / 2)
+                > Math.hypot(p.field.robotLengthIn / 2, p.field.robotWidthIn / 2) + EPSILON)
+            throw new IllegalArgumentException("Intake mouth extends beyond the configured robot clearance envelope");
     }
 
     private static void require_translation(Kinematics k) {
@@ -337,6 +478,7 @@ public final class Butine {
         if (!Double.isFinite(k.omegaMaxRadS) || !Double.isFinite(k.turnSettleS)
                 || !Double.isFinite(k.turnDeadbandRad) || !Double.isFinite(k.turnCoupling)
                 || !Double.isFinite(k.pickupDwellS)
+                || !Double.isFinite(k.junctionDeviationIn) || k.junctionDeviationIn <= 0
                 || k.omegaMaxRadS < 0 || k.turnSettleS < 0 || k.turnDeadbandRad < 0
                 || k.turnCoupling < 0 || k.turnCoupling > 1 || k.pickupDwellS < 0)
             throw new IllegalArgumentException("Invalid kinematics");
@@ -353,8 +495,11 @@ public final class Butine {
         final double[] reach = new double[MAX_CANDIDATES];
         final double[][] straight = new double[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
         final double[][] direction = new double[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
+        final double[][] exitDirection = new double[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
+        final double[][] internal = new double[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
         final boolean[][] degenerate = new boolean[MAX_CANDIDATES + 2][MAX_CANDIDATES + 2];
         int count;
+        String rejectionReason = "";
 
         Context(VisionPose start, VisionPose depot, Params params) {
             this.start = start;
@@ -365,19 +510,41 @@ public final class Butine {
 
         VisionPose node(int index) { return index == 0 ? depot : index == count + 1 ? start : poses[index - 1]; }
 
-        void build_tables() {
+        boolean build_tables() {
             for (int a = 0; a < count + 2; ++a) {
                 for (int b = 0; b < count + 2; ++b) {
                     VisionPose from = node(a);
                     VisionPose to = node(b);
-                    double dx = to.x - from.x;
-                    double dy = to.y - from.y;
-                    double distance = Math.hypot(dx, dy);
-                    degenerate[a][b] = distance < DEGENERATE_LEG_IN;
-                    straight[a][b] = degenerate[a][b] ? 0 : straight_time(distance, k);
-                    direction[a][b] = degenerate[a][b] ? 0 : Math.atan2(dy, dx);
+                    ButineField.Route route = params.field.route(from, to);
+                    if (route == null) return false;
+                    degenerate[a][b] = true;
+                    VisionPose previous = from;
+                    double heading = 0;
+                    for (int i = 0; i < route.point_count(); i++) {
+                        VisionPose point = route.point(i);
+                        double distance = previous.distance_to(point);
+                        if (distance >= DEGENERATE_LEG_IN) {
+                            double nextHeading = Math.atan2(point.y - previous.y, point.x - previous.x);
+                            double translation = straight_time(distance, k);
+                            if (degenerate[a][b]) {
+                                straight[a][b] = translation;
+                                direction[a][b] = nextHeading;
+                                degenerate[a][b] = false;
+                            } else internal[a][b] += coupled_time(translation, nextHeading, heading, k);
+                            heading = nextHeading;
+                        }
+                        previous = point;
+                    }
+                    exitDirection[a][b] = heading;
+                    finite_time(internal[a][b]);
                 }
             }
+            return true;
+        }
+
+        double cost(int from, int to, double incomingHeading) {
+            return degenerate[from][to] ? 0 : coupled_time(straight[from][to],
+                    direction[from][to], incomingHeading, k) + internal[from][to];
         }
     }
 
@@ -392,7 +559,10 @@ public final class Butine {
             boolean duplicate = false;
             for (int i = 0; i < ctx.count; ++i) if (ctx.ids[i] == item.id) { duplicate = true; break; }
             if (duplicate) continue;
-            double seconds = straight_time(Math.hypot(item.position.x - ctx.start.x, item.position.y - ctx.start.y), ctx.k);
+            if (!ctx.params.field.is_clear(item.position)) continue;
+            ButineField.Route reach = ctx.params.field.route(ctx.start, item.position);
+            if (reach == null || ctx.params.field.route(item.position, ctx.depot) == null) continue;
+            double seconds = route_time(ctx.start.heading, ctx.start, reach, ctx.k, null);
             int position = 0;
             while (position < ctx.count && ctx.reach[position] <= seconds) ++position;
             if (position >= wanted) continue;
@@ -417,15 +587,15 @@ public final class Butine {
         for (int m = 0; m < length; ++m) {
             int node = members[m] + 1;
             if (!ctx.degenerate[previous][node]) {
-                total += coupled_time(ctx.straight[previous][node], ctx.direction[previous][node], heading, ctx.k);
-                heading = ctx.direction[previous][node];
+                total += ctx.cost(previous, node, heading);
+                heading = ctx.exitDirection[previous][node];
             }
             total += ctx.k.pickupDwellS;
             previous = node;
         }
         if (!ctx.degenerate[previous][0]) {
-            total += coupled_time(ctx.straight[previous][0], ctx.direction[previous][0], heading, ctx.k);
-            heading = ctx.direction[previous][0];
+            total += ctx.cost(previous, 0, heading);
+            heading = ctx.exitDirection[previous][0];
         }
         return finite_time(total + settle_time(angle_difference(ctx.depot.heading, heading), ctx.k));
     }
@@ -565,13 +735,12 @@ public final class Butine {
             double cheapest = Double.POSITIVE_INFINITY;
             for (int c = 0; c < ctx.count; ++c) {
                 if (visited[c]) continue;
-                double cost = ctx.degenerate[previous][c + 1] ? 0 : coupled_time(
-                        ctx.straight[previous][c + 1], ctx.direction[previous][c + 1], heading, ctx.k);
+                double cost = ctx.cost(previous, c + 1, heading);
                 if (cost < cheapest) { cheapest = cost; best = c; }
             }
             tour[step] = best;
             visited[best] = true;
-            if (!ctx.degenerate[previous][best + 1]) heading = ctx.direction[previous][best + 1];
+            if (!ctx.degenerate[previous][best + 1]) heading = ctx.exitDirection[previous][best + 1];
             previous = best + 1;
         }
     }

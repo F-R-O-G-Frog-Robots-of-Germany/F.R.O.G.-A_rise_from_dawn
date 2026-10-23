@@ -7,7 +7,10 @@ import com.pedropathing.math.Pose;
 import com.pedropathing.paths.Path;
 import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
+import com.qualcomm.robotcore.util.RobotLog;
 import org.firstinspires.ftc.teamcode.core.control.CompConfig;
+import org.firstinspires.ftc.teamcode.core.control.CompetitionWorkers;
+import org.firstinspires.ftc.teamcode.core.control.OpModeCleanup;
 import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.control.LoopTiming;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
@@ -16,6 +19,8 @@ import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.core.pedro.PoseMirroring;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
+import org.firstinspires.ftc.teamcode.limelight.Butine;
+import org.firstinspires.ftc.teamcode.limelight.VisionPose;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.Shooter;
@@ -32,6 +37,10 @@ abstract class General extends LinearOpMode {
     protected Follower follower;
     protected Shooter shooterSubsystem;
     protected Intake intakeSubsystem;
+    protected CompetitionWorkers workers;
+    private boolean collectionPlanned;
+    private boolean collectingDynamic, collectionIntakeOn;
+    private long autoStartedNanos;
     private FlowerIntake flowerIntakeSubsystem;
     private Alliance alliance;
     private List<LynxModule> allHubs = new ArrayList<>();
@@ -46,28 +55,23 @@ abstract class General extends LinearOpMode {
 
     @Override
     public final void runOpMode() throws InterruptedException {
+        Throwable failure = null;
         try {
-            if (CompConfig.panels_enabled()) Panels.INSTANCE.enable();
-            else Panels.INSTANCE.disable();
-            allHubs = hardwareMap.getAll(LynxModule.class);
-            for (LynxModule hub : allHubs) hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
-            alliance = autonomous_alliance();
-            follower = Constants.create_follower(hardwareMap);
-            follower.setPose(starting_pose());
-            follower.localizer.update();
-            intakeSubsystem = new Intake();
-            intakeSubsystem.init(hardwareMap);
-            flowerIntakeSubsystem = new FlowerIntake();
-            flowerIntakeSubsystem.init(hardwareMap);
-            shooterSubsystem = new Shooter();
-            shooterSubsystem.init(hardwareMap, intakeSubsystem, alliance);
+            initialize_hardware();
             actions.clear();
+            collectionPlanned = false;
             build_autonomous();
-            telemetry.setMsTransmissionInterval(200);
+            workers = create_workers();
+            configure_workers(workers);
+            workers.start();
+            telemetry.setMsTransmissionInterval(100);
             while (opModeInInit()) {
+                follower.localizer.update();
+                workers.update();
                 shooterSelection.update(gamepad2, shooterSubsystem, telemetry);
                 if (CompConfig.init_telemetry_enabled()) {
                     telemetry.addData("Alliance", alliance);
+                    workers.telemetry(telemetry);
                     telemetry.update();
                 }
                 idle();
@@ -75,13 +79,14 @@ abstract class General extends LinearOpMode {
             waitForStart();
             if (isStopRequested()) return;
             for (LynxModule hub : allHubs) hub.setBulkCachingMode(LynxModule.BulkCachingMode.MANUAL);
+            autoStartedNanos = System.nanoTime();
             try {
                 for (Runnable action : actions) {
                     if (!opModeIsActive()) throw new AutoStopped();
                     action.run();
                 }
             } catch (AutoStopped ignored) {
-                // Driver Station STOP interrupts the sequence.
+                // Driver Station STOP or invalid localization aborts the sequence.
             } catch (AutoTimeout timeout) {
                 // An unreachable action aborts the route; cleanup below stops every mechanism.
                 if (CompConfig.telemetry_enabled()) {
@@ -89,21 +94,90 @@ abstract class General extends LinearOpMode {
                     telemetry.update();
                 }
             }
+        } catch (RuntimeException | Error stopped) {
+            failure = stopped;
+            throw stopped;
         } finally {
-            if (follower != null) {
-                follower.stop();
-                follower.drivetrain.stop();
-            }
-            if (shooterSubsystem != null) shooterSubsystem.stop();
-            if (intakeSubsystem != null) intakeSubsystem.stop();
-            if (flowerIntakeSubsystem != null) flowerIntakeSubsystem.up();
-            TaskManager.stop_all();
-            if (follower != null && alliance != null) {
-                clear_bulk_cache();
-                follower.localizer.update();
-                LastPositionStorage.store_data(follower.pose(), alliance);
-            }
+            OpModeCleanup.run(failure,
+                    () -> { if (workers != null) workers.request_stop(); },
+                    () -> { if (follower != null) follower.stop(); },
+                    () -> { if (follower != null) follower.drivetrain.stop(); },
+                    () -> { if (shooterSubsystem != null) shooterSubsystem.stop(); },
+                    () -> { if (intakeSubsystem != null) intakeSubsystem.stop(); },
+                    () -> { if (flowerIntakeSubsystem != null) flowerIntakeSubsystem.up(); },
+                    () -> {
+                        if (follower != null && alliance != null) {
+                            clear_bulk_cache();
+                            follower.localizer.update();
+                            LastPositionStorage.store_data(follower.pose(), alliance);
+                        }
+                    },
+                    TaskManager::stop_all,
+                    () -> { if (workers != null && !workers.stop())
+                        RobotLog.ww("Competition", "Worker still finishing after bounded shutdown"); });
         }
+    }
+
+    protected void initialize_hardware() {
+        if (CompConfig.panels_enabled()) Panels.INSTANCE.enable();
+        else Panels.INSTANCE.disable();
+        allHubs = hardwareMap.getAll(LynxModule.class);
+        for (LynxModule hub : allHubs) hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
+        alliance = autonomous_alliance();
+        follower = Constants.create_follower(hardwareMap);
+        follower.setPose(starting_pose());
+        follower.localizer.update();
+        intakeSubsystem = new Intake();
+        intakeSubsystem.init(hardwareMap);
+        flowerIntakeSubsystem = new FlowerIntake();
+        flowerIntakeSubsystem.init(hardwareMap);
+        shooterSubsystem = new Shooter();
+        shooterSubsystem.init(hardwareMap, intakeSubsystem, alliance);
+    }
+
+    protected boolean vision_enabled() { return planning_enabled(); }
+    protected boolean planning_enabled() { return collectionPlanned; }
+    protected CompetitionWorkers create_workers() {
+        return new CompetitionWorkers(hardwareMap, follower, vision_enabled(), planning_enabled());
+    }
+    /** Configure camera calibration, map and optional worker cores before their owners start. */
+    protected void configure_workers(CompetitionWorkers workers) { }
+
+    /** Depot coordinates are already in the same real field frame as camera observations. */
+    protected final void queue_collection(VisionPose depot, Butine.Params params, double speedScale) {
+        if (depot == null || !depot.is_finite() || params == null)
+            throw new IllegalArgumentException("finite depot and planner parameters are required");
+        require_positive(speedScale, "speedScale");
+        if (speedScale > 1) throw new IllegalArgumentException("speedScale must be <= 1");
+        Butine.Params settings = new Butine.Params(params);
+        collectionPlanned = true;
+        actions.add(() -> {
+            Butine.Params remaining = new Butine.Params(settings);
+            remaining.remainingS = Math.max(0, settings.remainingS - (System.nanoTime() - autoStartedNanos) / 1e9);
+            if (remaining.remainingS <= 0) return;
+            follower.stop();
+            follower.drivetrain.stop();
+            if (!workers.request_collection(depot, remaining, speedScale)) {
+                RobotLog.ww("Competition", workers.detail());
+                return;
+            }
+            Throwable collectionFailure = null;
+            try {
+                collectingDynamic = true;
+                collectionIntakeOn = false;
+                intakeSubsystem.off();
+                flowerIntakeSubsystem.down();
+                run_until(() -> !workers.owns_drive(), remaining.remainingS, "collection match allowance", null, null);
+            } catch (RuntimeException | Error stopped) {
+                collectionFailure = stopped;
+                throw stopped;
+            } finally {
+                collectingDynamic = false;
+                collectionIntakeOn = false;
+                OpModeCleanup.run(collectionFailure, workers::cancel_drive,
+                        intakeSubsystem::off, flowerIntakeSubsystem::up);
+            }
+        });
     }
 
     /**
@@ -213,8 +287,29 @@ abstract class General extends LinearOpMode {
 
     private void update_follower_and_telemetry() {
         follower.update();
+        if (collectingDynamic && (intakeSubsystem.full_load_held() || intakeSubsystem.loaded())) {
+            if (collectionIntakeOn) {
+                intakeSubsystem.off();
+                collectionIntakeOn = false;
+            }
+            workers.return_to_depot_if_loaded(true);
+        }
+        if (workers != null) workers.update();
+        if (collectingDynamic) {
+            boolean requested = workers.collection_intake_required();
+            if (requested != collectionIntakeOn) {
+                if (requested) intakeSubsystem.forward(); else intakeSubsystem.off();
+                collectionIntakeOn = requested;
+            }
+        }
         Pose pose = follower.pose();
-        shooterSubsystem.update(pose.x(), pose.y(), SensorReadings.is_valid(pose));
+        boolean poseValid = SensorReadings.is_valid(pose);
+        if (!poseValid) {
+            follower.stop();
+            follower.drivetrain.stop();
+            throw new AutoStopped();
+        }
+        shooterSubsystem.update(pose.x(), pose.y(), poseValid);
         loopTiming.end_work();
         if (CompConfig.loop_time_telemetry_enabled()) {
             telemetry.addData("Work ms", loopTiming.work_ms());

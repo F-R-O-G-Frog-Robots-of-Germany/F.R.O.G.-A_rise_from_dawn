@@ -35,6 +35,7 @@ public final class RunnerAuditChecks {
 
     private static Butine.Params parameters() {
         Butine.Params p = new Butine.Params();
+        p.field = ButineField.unrestricted();
         p.capacity = 1; p.lookaheadRuns = 1; p.iterationCap = 0; p.localSearchPasses = 0;
         return p;
     }
@@ -48,7 +49,7 @@ public final class RunnerAuditChecks {
     private static void request_boundaries() {
         Drive drive = new Drive();
         ButineRunner empty = new ButineRunner(new PollenMap(), drive);
-        require(!empty.run_butine(new VisionPose(80, 80, 0)), "empty map declines run away from depot");
+        require(!empty.run_butine(new VisionPose(80, 80, 0), parameters(), 1), "empty map declines run away from depot");
         require(empty.state() == ButineRunner.State.IDLE && empty.stats().runsCompleted == 0,
                 "empty map cannot signal ready to score");
         ButineRunner runner = new ButineRunner(populated(), drive);

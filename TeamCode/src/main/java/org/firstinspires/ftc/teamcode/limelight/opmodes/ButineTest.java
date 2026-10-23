@@ -79,7 +79,7 @@ public final class ButineTest extends LinearOpMode {
                     if (pressed(0, gamepad2.a)) plan = Butine.solve(map.snapshot(), here, depot, params);
                     if (pressed(1, gamepad2.b)) {
                         Butine.Params uncapped = new Butine.Params(params);
-                        uncapped.capacity = 0;
+                        uncapped.capacity = Butine.POSSESSION_LIMIT;
                         plan = Butine.solve(map.snapshot(), here, depot, uncapped);
                     }
                     if (pressed(2, gamepad2.y)) {
@@ -95,17 +95,21 @@ public final class ButineTest extends LinearOpMode {
                     if (pressed(6, gamepad2.dpad_down)) params.lookaheadRuns = Math.max(1, params.lookaheadRuns - 1);
                     if (pressed(7, gamepad2.dpad_right)) params.discount = Math.min(1, params.discount + 0.05);
                     if (pressed(8, gamepad2.dpad_left)) params.discount = Math.max(0, params.discount - 0.05);
-                    if (pressed(9, gamepad2.right_bumper)) params.capacity = Math.min(Butine.MAX_RUN_LEN, params.capacity + 1);
-                    if (pressed(10, gamepad2.left_bumper)) params.capacity = Math.max(0, params.capacity - 1);
+                    if (pressed(9, gamepad2.right_bumper)) params.capacity = Math.min(Butine.POSSESSION_LIMIT, params.capacity + 1);
+                    if (pressed(10, gamepad2.left_bumper)) params.capacity = Math.max(1, params.capacity - 1);
                     if (pressed(11, gamepad2.right_stick_button)) depot = here;
                     if (pressed(12, gamepad2.left_stick_button) && plan != null && plan.fittingRuns > 0) {
-                        inspected = ButineRunner.build_run_legs(plan.runs[0], here, depot, params.kinematics);
+                        try {
+                            inspected = ButineRunner.build_run_legs(plan.runs[0], here, depot, params.kinematics, plan.field);
+                        } catch (IllegalArgumentException blockedRoute) {
+                            inspected = new ArrayList<>();
+                            comparison = "Inspection unavailable: " + blockedRoute.getMessage();
+                        }
                     }
                     if (pressed(13, gamepad2.right_trigger > 0.5)) params.remainingS += 2.5;
                     if (pressed(14, gamepad2.left_trigger > 0.5)) params.remainingS = Math.max(2.5, params.remainingS - 2.5);
                     if (requested && !followedThisHold && plan != null && plan.fittingRuns > 0) {
                         Butine.Params runParams = new Butine.Params(params);
-                        if (plan.uncapacitated) runParams.capacity = 0;
                         followedThisHold = true;
                         runner.run_butine(depot, runParams, 1.0);
                     }
@@ -133,15 +137,18 @@ public final class ButineTest extends LinearOpMode {
                     }
                 }
                 double predicted = 0;
+                telemetry.addData("Intake geometry", "%.1f in wide, %.1f in ahead, %.1f in overshoot",
+                        params.intakeWidthIn, params.intakeForwardOffsetIn, params.intakeOvershootIn);
                 for (int i = 0; i < inspected.size(); i++) {
                     ButineRunner.Leg leg = inspected.get(i);
                     predicted += leg.predictedS;
                     telemetry.addData("Built " + i, "%s -> %.1f,%.1f @ %.1f deg / %.2f s",
-                            leg.returning ? "home linear" : "#" + leg.pollenId + " tangent",
+                            leg.returning ? "home linear" : leg.constantHeading ? "intake constant"
+                                    : leg.intakeActive ? "intake transit" : "intake off",
                             leg.target.x, leg.target.y, Math.toDegrees(leg.target.heading), leg.predictedS);
                 }
                 if (!inspected.isEmpty()) telemetry.addData("Built prediction sum", predicted);
-                telemetry.addLine("gp2 A solve | B uncapped | Y compare | X synth | BACK clear | RSB depot | LSB legs");
+                telemetry.addLine("gp2 A solve | B full load (4) | Y compare | X synth | BACK clear | RSB depot | LSB legs");
                 telemetry.addLine("dpad UD lookahead LR discount | bumpers capacity | triggers time | gp1 RT hold drive");
                 telemetry.update();
                 idle();

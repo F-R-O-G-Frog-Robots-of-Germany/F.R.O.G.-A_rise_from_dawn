@@ -20,6 +20,7 @@ public final class AsyncRunnerChecks {
     }
     private static Butine.Params params() {
         Butine.Params p=new Butine.Params();p.capacity=1;p.lookaheadRuns=1;
+        p.sweepIntake=false; // These traces exercise legacy per-leg recovery; continuous handoff has integration coverage.
         p.iterationCap=0;p.localSearchPasses=0;return p;
     }
     private static PollenMap map() { PollenMap map=new PollenMap();map.inject(new VisionPose(40,20,0));return map; }

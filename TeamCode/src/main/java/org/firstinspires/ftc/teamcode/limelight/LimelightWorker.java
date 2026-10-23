@@ -242,6 +242,8 @@ public final class LimelightWorker {
     public Snapshot snapshot() { return latest; }
     public Stats stats() { return statistics; }
     public boolean is_running() { return thread != null && !stopRequested; }
+    /** Retains ownership through requested stop, blocked SDK calls and final camera shutdown. */
+    public boolean has_owner() { return thread != null; }
 
     /** Nonblocking stop used on loop failure. It never steals camera ownership from blocked SDK I/O. */
     public void request_stop() { request_stop_owner(); }
