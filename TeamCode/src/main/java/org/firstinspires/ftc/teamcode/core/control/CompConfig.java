@@ -14,6 +14,12 @@ public final class CompConfig {
     /** Allow INIT selection telemetry in competition mode; false suppresses that exception. */
     public static final boolean INIT_TELEMETRY = true;
 
+    /** Optional camera worker; a missing camera leaves normal competition control available. */
+    public static final boolean VISION_ENABLED = true;
+
+    /** -1 retains Android placement until the future robot can establish a useful control CPU. */
+    public static final int CONTROL_CORE = -1;
+
     public static boolean panels_enabled() {
         return !COMP_MODE;
     }

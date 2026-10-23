@@ -6,5 +6,10 @@ public final class LLResultTypes {
         public double getTargetXDegrees(){return tx;} public double getTargetYDegrees(){return ty;}
         public double getTargetArea(){return area;}
     }
-    public static class FiducialResult {}
+    public static class FiducialResult {
+        public int id;
+        public org.firstinspires.ftc.robotcore.external.navigation.Pose3D targetPoseCameraSpace;
+        public int getFiducialId(){return id;}
+        public org.firstinspires.ftc.robotcore.external.navigation.Pose3D getTargetPoseCameraSpace(){return targetPoseCameraSpace;}
+    }
 }

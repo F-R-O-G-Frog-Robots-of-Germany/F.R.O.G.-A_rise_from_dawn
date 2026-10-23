@@ -1,14 +1,18 @@
 # Limelight and Butine — Java port
 
-This folder brings the Limelight and Butine functionality from `StudioProjects/butine test` (formerly Ma Douce) into F.R.O.G. Autonomous routines can opt into dynamic collection with `queue_collection`; existing authored routes retain their behavior.
+This folder brings the Limelight and Butine functionality from `StudioProjects/butine test` (formerly Ma Douce) into F.R.O.G. Competition TeleOp and autonomous now service it through `CompetitionWorkers`; authored routes retain their existing behavior until an explicit collection action is added.
+
+## Competition lifecycle integration
+
+Both competition bases construct/configure the required workers during INIT, start them before optional control-thread affinity, and service their publications after each localization update. `CompConfig.VISION_ENABLED` enables the optional vision worker by default; missing camera initialization does not disable manual TeleOp or static autonomous. Override `vision_enabled()` for an OpMode that needs no vision. `CompConfig.CONTROL_CORE = -1` leaves the control thread's eligible mask unchanged; a selected zero-based CPU is applied once during INIT, verified, and its original mask is restored during cleanup.
+
+An autonomous `queue_collection(depot, params, speedScale)` action opts that OpMode into the planner worker and its required vision worker. The depot is already in the actual field frame; `params.remainingS` counts the match allowance from autonomous START, with elapsed time deducted when the action begins. An accepted collection action runs intake and lowers the flower intake, continues servicing the common loop while planning/collecting, then stops intake and raises it. Scoring remains a separately authored action. Existing routes have not been given collection actions automatically.
+
+TeleOp can override `planning_enabled()` and explicitly call `request_collection(...)` or `request_relocalization()`; no new driver buttons are assigned. Main preserves assistance ownership while sticks are neutral, and cancels it before manual input, aim, pose reset or alliance changes take over. Startup alone never moves the robot or requests a correction. Use `configure_workers(CompetitionWorkers workers)` to set camera/map calibration and worker core preferences before owners start. Caller code treats published planner arrays as read-only.
+
+The important gamepad/Pedro/shooter/intake loop remains a single thread. No per-subsystem scheduler or compute-time budget was introduced. Cleanup cancels work, attempts independent safe hardware outputs, waits bounded intervals for original worker owners, and finally restores control affinity even when another cleanup step fails. The robot has not been built; camera calibration, physical assignment, pickup behavior and performance remain unverified.
 
 The source was inspected through commit `84c0a01` and the working copy's Limelight-related files, including uncommitted Butine runner/header changes and the untracked relocalization runner. The latest implementations incorporate the earlier fixes rather than reproducing each old revision. The original explanations and review history are preserved in [docs/ma-douce](docs/ma-douce); those documents describe C++ and sometimes older defaults. This README and the Java classes describe the port.
-
-## Competition collection integration
-
-`queue_collection(depot, params, speedScale)` opts an autonomous into its camera and planner workers. Workers start during INIT and are serviced by the existing control loop; static routes do not start vision by default. The depot is already in the actual field frame, and the action deducts elapsed autonomous time before requesting a run. Published camera/planner data crosses threads; motor commands remain on the OpMode thread.
-
-The action lowers the flower intake, follows `intake_required()` through collection/overshoot and intake-off return, then raises the flower intake. A latched `full_load_held()` or a current valid REV `loaded()` result immediately requests a safe return without treating sensor fullness as proof that planned pollen were collected. Scoring remains a separately authored action. Worker cancellation and bounded shutdown are part of cleanup. Override `configure_workers(...)` before startup for calibration; startup alone does not command movement.
 
 ## What is here
 
@@ -122,7 +126,7 @@ Failed targets remain in the map but are excluded by ID and location for this ru
 
 Check the return value of `run_butine()`. `false` can mean the drive is already occupied or there is no fitting collection run; consult `state()` and `last_report()`. An empty plan does not drive the robot to the depot. Continuous return requires position within 0.5 inch, heading within 2 degrees, and measured translation speed at most 1 inch/s, in addition to Pedro completion. Pedro holds the depot while settling; its timeout alone cannot declare success. The legacy point mode retains its older 6-inch/8-degree arrival gates. Speed scaling changes the Foresight velocity constraint.
 
-The three bench OpModes are disabled initially. Enable the one being tested deliberately after checking mounting, pipeline configuration, drive power and field coordinates. Dynamic collection is opt-in through `queue_collection`; no authored scoring pose is moved automatically, and `Robot`, Shooter and Intake behavior remains caller-owned.
+The three bench OpModes are disabled initially. Enable the one being tested deliberately after checking mounting, pipeline configuration, drive power and field coordinates. No competition autonomous, `Robot`, Shooter or Intake source was modified by this port.
 
 The regression checks under `tests/java/org/firstinspires/ftc/teamcode/limelight` exercise map replacement, projection, planner constraints and runner state transitions without commanding robot hardware. The project should also compile with `gradlew.bat :TeamCode:compileDebugJavaWithJavac` before deployment.
 
@@ -138,4 +142,38 @@ Validation on 11 October 2026 after compute-time-cap removal: the updated standa
 
 Use `ButineRunner(map, drive, planner)` for background collection planning and `LimelightRunner(vision, drive)` for background camera operations with main-loop pose corrections. Existing synchronous calls remain supported. The background collection runner stays in `PLANNING` until a current, feasible result is accepted; drive calls remain on the OpMode thread. Camera/map configuration belongs before worker start, and camera commands go through the worker while it owns the device.
 
-The disabled **Limelight CPU thread test** (`opmodes/CpuThreadTest.java`) displays verified assignments, allowed CPU lists/masks, last execution CPU, per-thread/per-core utilization, frequency, scheduler state, memory, temperatures, worker timings and loop periods. Dpad pages every app thread; A requests a synthetic solve, B cancels, and X toggles control-loop affinity. It creates no drive hardware and uses a labelled synthetic camera pose. See [setup, APIs, statistics and limitations](docs/THREADING-2026-10-16.md) before using the workers or enabling the test. Competition autonomous can explicitly opt into `queue_collection`; this CPU diagnostic still constructs no drive hardware.
+The disabled **Limelight CPU thread test** (`opmodes/CpuThreadTest.java`) compares an original-Android-mask baseline with the main thread eligible on CPU `{0}`, `{0,1}` or `{0,1,2}`. The three restricted modes keep vision on CPU 1 and planning on CPU 2; the baseline removes both worker bindings too. One Java thread still runs on one CPU at a time. It displays verified assignments, allowed CPU lists/masks, utilization, frequency, temperatures, worker timings and retained per-mode loop summaries including p95/p99. X cycles modes; Y selects idle or repeatable synthetic planner load and clears old comparisons. A/B provide manual solve/cancel diagnostics, labelled separately from repeatable comparisons; dpad pages every app thread. The test creates no drive hardware and uses a labelled synthetic camera pose. See [controls, measurement details and limitations](docs/THREADING-2026-10-16.md) before enabling it. Competition routes explicitly opt into collection through `queue_collection(...)`.
+
+## Hive pose from a moving tag
+
+`HivePoseEstimator` implements the [hinge calculation](docs/Hive-Hinge-Full-Numerical-Example-2026-10-18.md). `HiveLimelightObservation` converts a full SDK per-tag pose to the estimator's camera coordinates. `HiveGeometry` supplies the 16 tag models and a clearly marked placeholder camera mount. This is an isolated calculation: it creates no threads, changes no pipelines, and applies no pose corrections.
+
+```java
+HivePoseEstimator estimator = new HivePoseEstimator(
+        HiveGeometry.tag_models(), HiveGeometry.camera_mount());
+HivePoseEstimator.Observation observation = HiveLimelightObservation.from_fiducial(
+        fiducial, captureTimeMs, timingAssumed);
+HivePoseEstimator.Result fix = estimator.estimate(
+        observation, gravityAtCapture, gravityAssumed);
+// fix == null: unusable input. Otherwise read x, y, heading, z, axisErrorDeg,
+// captureTimeMs and usesAssumedValues. No robot pose is changed here.
+```
+
+`fiducial` comes from an already-owned camera's `LLResult.getFiducialResults()`. Enable full 3D AprilTag tracking with the correct 3.25-inch black-square size. These are relative tag measurements, not a static Hive field-map pose or MT2 yaw. Gravity is the downward direction in robot forward/left/up axes, aligned to image exposure; if a level robot is assumed, pass `{0,0,-1}` and `gravityAssumed=true`. The adapter also supports `from_result(...)` for copying all usable tags from one frame. Results remain per-tag; there is no multi-tag optimizer or averaging layer.
+
+The caller supplies exposure time on its own monotonic millisecond clock and handles freshness, duplicate frames and gravity alignment. Set `timingAssumed=true` when estimating exposure time from receipt/latencies; SDK staleness alone is not image age. Position is in the report's centered field frame: +X audience-right, +Y away from the audience, +Z up; heading is counterclockwise radians. It is not automatically converted into `VisionPose` or Pedro coordinates. `z` reports inferred robot height and `axisErrorDeg` reports axis/gravity disagreement before leveling; neither is an accuracy score or an automatic acceptance threshold.
+
+Geometry comes from the [official manual, §9.6/§9.9 and Fig. 9-15–17](https://ftc-resources.firstinspires.org/ftc/game/manual) and [official STEP](https://ftc-resources.firstinspires.org/ftc/field/field-cad-step). The inspected STEP SHA256 is `05b35961c7df847741031f00fda73ddd068537f809e92a11b1cd59a94bcc8331`. Shooting positions are not used.
+
+| Value | Origin |
+|---|---|
+| Hinge points `(−12.75,0,43.95)` / `(+12.75,0,43.95)` inches | Nominal CAD spacing and manual height, in the centered frame |
+| Red scoring IDs 30–33; red audience 34–37; blue audience 38–41; blue scoring 42–45 | Manual layout |
+| Tag black-square side 3.25 in; strip offsets `6.5,2.75,−2.75,−6.5` for increasing IDs in the chosen native basis | Manual dimensions and artwork |
+| Tag-to-hinge in-plane offset `14.269059480313` in | CAD hinge at sticker Y `16.519059480313`, minus tag center Y `5−2.75=2.25` |
+| Tag-to-hinge normal component `1.488167842276+0.01` in | CAD slab offset plus **assumed** printed surface at sticker Z `+0.01` |
+| Along-axis correction `−0.000944881890` in audience / `+0.000944881890` in scoring | CAD assembly placement |
+
+The native tag-to-sticker axis/sign convention and code alignment remain explicitly **assumed**, because the CAD lacks tag textures and Limelight's target-axis prose is handedness-ambiguous. The adapter's numerical rotation order is independently verified against official Limelight code and paired inverse-pose data. The physical print-side assumption and unknown robot mounting are also commented in `HiveGeometry`. Consequently default results have `usesAssumedValues=true`; they are provisional geometry estimates. Custom measured tag models and mounting can replace these defaults without changing the estimator.
+
+The desktop audit tests ±30° circular motion, the complete numerical example, 1,500 arbitrary full-pose cases with camera offsets and robot tilt, invalid inputs, immutable snapshots, SDK axis/unit conversion and one SDK-to-final-robot-pose case. Run `tools/limelight-audit/run.ps1`. This verifies software and SDK compatibility, not real-world accuracy or a 100-ms measurement deadline.

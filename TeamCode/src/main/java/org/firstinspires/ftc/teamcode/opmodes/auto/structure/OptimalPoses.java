@@ -41,8 +41,7 @@ public final class OptimalPoses {
 
         public Pose plus(Pose BASE) {
             if (!FIELD_FIX || (dx == 0.0 && dy == 0.0 && ddeg == 0.0)) return BASE;
-            return new Pose(BASE.x() + dx, BASE.y() + dy,
-                    BASE.heading() + Math.toRadians(ddeg));
+            return BASE.plus(DEGREES.of(dx, dy, ddeg));
         }
     }
 

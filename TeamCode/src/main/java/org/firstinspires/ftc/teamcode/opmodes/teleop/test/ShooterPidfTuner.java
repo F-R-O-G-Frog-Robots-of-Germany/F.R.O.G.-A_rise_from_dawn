@@ -11,6 +11,7 @@ import com.qualcomm.robotcore.hardware.Servo;
 
 import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
+import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
@@ -50,7 +51,7 @@ public class ShooterPidfTuner extends LinearOpMode {
 
     private CachedMotor shooterMotorLeft;
     private CachedMotor shooterMotorRight;
-    private Servo hoodServo;
+    private CachedServo hoodServo;
     private Follower follower;
     private Alliance alliance;
     private double targetRpm = DEFAULT_TARGET_RPM;
@@ -59,20 +60,6 @@ public class ShooterPidfTuner extends LinearOpMode {
     private boolean shooterEnabled = false;
     private boolean rightMotorEnabled = true;
 
-    private boolean previousStart;
-    private boolean previousX;
-    private boolean previousBack;
-    private boolean previousY;
-    private boolean previousB;
-    private boolean previousDpadUp;
-    private boolean previousDpadRight;
-    private boolean previousDpadDown;
-    private boolean previousDpadLeft;
-    private boolean previousRightBumper;
-    private boolean previousLeftBumper;
-    private boolean previousModel;
-    private boolean previousModelLeft, previousModelRight, previousModelDecrease, previousModelIncrease;
-    private boolean previousCurve, previousHoodUp, previousHoodDown, previousCapture;
     private boolean editingHood;
     private boolean distanceModelEnabled;
     private int selectedCoefficient;
@@ -87,7 +74,6 @@ public class ShooterPidfTuner extends LinearOpMode {
     private boolean hoodCommanded;
     private double appliedHoodAngle = Double.NaN;
     private long lastHoodCommandNanos;
-    private boolean previousBAlliance;
     private String capturedSample = "No sample; G2 A captures distance[in], measured RPM, commanded hood[deg]";
     private String captureMessage = "No capture attempted";
     private double commandedRpm = DEFAULT_TARGET_RPM;
@@ -107,7 +93,7 @@ public class ShooterPidfTuner extends LinearOpMode {
             shooterMotorRight.set_power(0.0);
             shooterMotorRight.raw().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             shooterMotorRight.raw().setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-            hoodServo = hardwareMap.get(Servo.class, "servoHood");
+            hoodServo = new CachedServo(hardwareMap.get(Servo.class, "servoHood"), Shooter.HOOD_POSITION_EPSILON);
             command_hood();
             apply_pidf();
 
@@ -118,10 +104,9 @@ public class ShooterPidfTuner extends LinearOpMode {
             telemetry.setMsTransmissionInterval(LOOP_PERIOD_MS);
 
             while (opModeInInit()) {
-                if (pressed(gamepad2.b, previousBAlliance)) {
+                if (gamepad2.bWasPressed()) {
                     alliance = alliance == Alliance.RED ? Alliance.BLUE : Alliance.RED;
                 }
-                previousBAlliance = gamepad2.b;
                 telemetry.addLine("Shooter PIDF tuner ready; start at (9, 9), heading 0 deg");
                 telemetry.addData("Alliance (G2 B toggles during INIT)", alliance);
                 telemetry.addLine("Start: toggle | Y/B: RPM | D-pad: P/I/D/F");
@@ -138,6 +123,8 @@ public class ShooterPidfTuner extends LinearOpMode {
             if (isStopRequested()) {
                 return;
             }
+
+            start_controls();
 
             while (opModeIsActive()) {
                 follower.update();
@@ -173,7 +160,7 @@ public class ShooterPidfTuner extends LinearOpMode {
                 validTargets &= command_flywheels(velocity.is_valid()
                         && (!rightMotorEnabled || velocity2.is_valid()));
 
-                if (pressed(gamepad2.a, previousCapture)) {
+                if (gamepad2.aWasPressed()) {
                     if (shooterEnabled && validTargets && commandedRpm > 0
                             && hive.valid && velocity.is_valid()
                             && Math.abs(measuredRpm - commandedRpm) <= Shooter.SHOOT_SPEED_TOLERANCE_RPM
@@ -188,7 +175,6 @@ public class ShooterPidfTuner extends LinearOpMode {
                         captureMessage = "Rejected: require valid targets, motor ON, RPM in tolerance and settled hood";
                     }
                 }
-                previousCapture = gamepad2.a;
 
                 add_telemetry(pose, hive);
                 sleep(LOOP_PERIOD_MS);
@@ -210,12 +196,11 @@ public class ShooterPidfTuner extends LinearOpMode {
         }
     }
 
-    /** Track the angle actually sent, including the hood's command deadband. */
+    /** Track the angle actually sent, including the servo cache's deadband. */
     private boolean command_hood() {
         hoodPosition = Shooter.hood_angle_to_servo_position(commandedHoodAngle);
-        if (!SensorReadings.is_valid(hoodPosition)) return false;
+        if (!hoodServo.set_position(hoodPosition)) return false;
         if (!hoodCommanded || Math.abs(hoodPosition - appliedHoodPosition) >= Shooter.HOOD_POSITION_EPSILON) {
-            hoodServo.setPosition(Math.max(0, Math.min(1, hoodPosition)));
             appliedHoodPosition = hoodPosition;
             hoodCommanded = true;
             appliedHoodAngle = Math.max(Shooter.HOOD_MIN_ANGLE_DEG,
@@ -230,57 +215,52 @@ public class ShooterPidfTuner extends LinearOpMode {
                 && System.nanoTime() - lastHoodCommandNanos >= Shooter.HOOD_SETTLE_TIME_MS * 1_000_000L;
     }
 
+    private void start_controls() {
+        gamepad1.resetEdgeDetection();
+        gamepad1.copy(gamepad1);
+        gamepad2.resetEdgeDetection();
+        gamepad2.copy(gamepad2);
+    }
+
     private void update_controls() {
-        if (pressed(gamepad1.start, previousStart)) {
+        if (gamepad1.startWasPressed()) {
             shooterEnabled = !shooterEnabled;
         }
-        if (pressed(gamepad1.x, previousX)) {
+        if (gamepad1.xWasPressed()) {
             rightMotorEnabled = !rightMotorEnabled;
         }
-        if (pressed(gamepad1.back, previousBack)) {
+        if (gamepad1.backWasPressed()) {
             targetRpm = DEFAULT_TARGET_RPM;
             pidf = new PIDFCoefficients(DEFAULT_P, DEFAULT_I, DEFAULT_D, DEFAULT_F);
             selectedParameter = PidfParameter.P;
             apply_pidf();
         }
 
-        if (pressed(gamepad1.y, previousY)) {
+        if (gamepad1.yWasPressed()) {
             set_target_rpm(targetRpm + RPM_STEP);
         }
-        if (pressed(gamepad1.b, previousB)) {
+        if (gamepad1.bWasPressed()) {
             set_target_rpm(targetRpm - RPM_STEP);
         }
 
-        if (pressed(gamepad1.dpad_up, previousDpadUp)) {
+        if (gamepad1.dpadUpWasPressed()) {
             selectedParameter = PidfParameter.P;
         }
-        if (pressed(gamepad1.dpad_right, previousDpadRight)) {
+        if (gamepad1.dpadRightWasPressed()) {
             selectedParameter = PidfParameter.I;
         }
-        if (pressed(gamepad1.dpad_down, previousDpadDown)) {
+        if (gamepad1.dpadDownWasPressed()) {
             selectedParameter = PidfParameter.D;
         }
-        if (pressed(gamepad1.dpad_left, previousDpadLeft)) {
+        if (gamepad1.dpadLeftWasPressed()) {
             selectedParameter = PidfParameter.F;
         }
-        if (pressed(gamepad1.right_bumper, previousRightBumper)) {
+        if (gamepad1.rightBumperWasPressed()) {
             change_selected_pidf(1.0);
         }
-        if (pressed(gamepad1.left_bumper, previousLeftBumper)) {
+        if (gamepad1.leftBumperWasPressed()) {
             change_selected_pidf(-1.0);
         }
-
-        previousStart = gamepad1.start;
-        previousX = gamepad1.x;
-        previousBack = gamepad1.back;
-        previousY = gamepad1.y;
-        previousB = gamepad1.b;
-        previousDpadUp = gamepad1.dpad_up;
-        previousDpadRight = gamepad1.dpad_right;
-        previousDpadDown = gamepad1.dpad_down;
-        previousDpadLeft = gamepad1.dpad_left;
-        previousRightBumper = gamepad1.right_bumper;
-        previousLeftBumper = gamepad1.left_bumper;
     }
 
     private void set_target_rpm(double rpm) {
@@ -323,27 +303,24 @@ public class ShooterPidfTuner extends LinearOpMode {
     }
 
     private void update_model_controls() {
-        if (pressed(gamepad2.y, previousModel)) distanceModelEnabled = !distanceModelEnabled;
-        if (pressed(gamepad2.x, previousCurve)) editingHood = !editingHood;
+        boolean up = gamepad2.dpadUpWasPressed();
+        boolean down = gamepad2.dpadDownWasPressed();
+        if (gamepad2.yWasPressed()) distanceModelEnabled = !distanceModelEnabled;
+        if (gamepad2.xWasPressed()) editingHood = !editingHood;
         if (!distanceModelEnabled) {
-            if (pressed(gamepad2.dpad_up, previousHoodUp)) manualHoodAngle = Math.min(Shooter.HOOD_MAX_ANGLE_DEG, manualHoodAngle + 1);
-            if (pressed(gamepad2.dpad_down, previousHoodDown)) manualHoodAngle = Math.max(Shooter.HOOD_MIN_ANGLE_DEG, manualHoodAngle - 1);
+            if (up) manualHoodAngle = Math.min(Shooter.HOOD_MAX_ANGLE_DEG, manualHoodAngle + 1);
+            if (down) manualHoodAngle = Math.max(Shooter.HOOD_MIN_ANGLE_DEG, manualHoodAngle - 1);
         }
-        if (pressed(gamepad2.dpad_left, previousModelLeft)) selectedCoefficient = (selectedCoefficient + 2) % 3;
-        if (pressed(gamepad2.dpad_right, previousModelRight)) selectedCoefficient = (selectedCoefficient + 1) % 3;
+        if (gamepad2.dpadLeftWasPressed()) selectedCoefficient = (selectedCoefficient + 2) % 3;
+        if (gamepad2.dpadRightWasPressed()) selectedCoefficient = (selectedCoefficient + 1) % 3;
         double[] curve = editingHood ? hoodCoefficients : coefficients;
         double[] steps = editingHood ? HOOD_COEFFICIENT_STEPS : COEFFICIENT_STEPS;
-        if (pressed(gamepad2.left_bumper, previousModelDecrease)) {
+        if (gamepad2.leftBumperWasPressed()) {
             curve[selectedCoefficient] -= steps[selectedCoefficient];
         }
-        if (pressed(gamepad2.right_bumper, previousModelIncrease)) {
+        if (gamepad2.rightBumperWasPressed()) {
             curve[selectedCoefficient] += steps[selectedCoefficient];
         }
-        previousCurve = gamepad2.x;
-        previousHoodUp = gamepad2.dpad_up; previousHoodDown = gamepad2.dpad_down;
-        previousModel = gamepad2.y;
-        previousModelLeft = gamepad2.dpad_left; previousModelRight = gamepad2.dpad_right;
-        previousModelDecrease = gamepad2.left_bumper; previousModelIncrease = gamepad2.right_bumper;
     }
 
     private void add_telemetry(Pose pose, Shooter.HiveDistance nearestHive) {
@@ -389,10 +366,6 @@ public class ShooterPidfTuner extends LinearOpMode {
 
     private static double rpm_to_ticks_per_second(double rpm) {
         return rpm * Shooter.ENCODER_TICKS_PER_REV / 60.0;
-    }
-
-    private static boolean pressed(boolean current, boolean previous) {
-        return current && !previous;
     }
 
     private enum PidfParameter {

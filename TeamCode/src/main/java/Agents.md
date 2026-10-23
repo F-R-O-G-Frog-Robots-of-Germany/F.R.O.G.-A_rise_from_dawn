@@ -58,4 +58,5 @@ Always explain what you found online to me. Use those sites as reliable sources:
 limelight: https://docs.limelightvision.io/
 pedro pathing: https://pedropathing.com/docs/pathing
 general ftc:https://ftc-docs.firstinspires.org/en/latest/index.html
-
+## Important Information
+The robot isnt built yet thus anything which includes physical tuning or test isnt possible, you may mention it, but dont assume its possible think about another way or tell me that your approach isnt possible without the robot

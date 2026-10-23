@@ -183,6 +183,7 @@ public final class CompetitionCollectionAudit {
                     (proxy, method, args) -> method.getReturnType() == boolean.class ? true : null);
         }
 
+        @Override protected int control_core() { return -1; }
 
         @Override protected void initialize_hardware() {
             set(this, "allHubs", new ArrayList<>());

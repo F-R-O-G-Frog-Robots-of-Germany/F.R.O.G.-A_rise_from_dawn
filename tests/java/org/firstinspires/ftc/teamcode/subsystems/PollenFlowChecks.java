@@ -5,12 +5,10 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.Servo;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
-import org.firstinspires.ftc.teamcode.core.inputs.InputManager;
+import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
-import org.firstinspires.ftc.teamcode.opmodes.teleop.AbstractTeleOp;
 import org.firstinspires.ftc.teamcode.opmodes.teleop.comp.Main;
 import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
@@ -36,6 +34,8 @@ public final class PollenFlowChecks {
         sensor_cases();
         trigger_sequences();
         active_shot_faults();
+        dual_encoder_feedback();
+        encoder_sample_recovery();
         full_load_lifecycle();
         deferred_shot_targets();
         System.out.println("Production-state matrix: " + matrixCases + " combinations passed");
@@ -152,6 +152,25 @@ public final class PollenFlowChecks {
         sequence(!c.rig.intake.is_scoring_requested() && !c.rig.intake.is_shooting_requested()
                 && c.rig.intake.get_intake_power() == 1, "simultaneous LT full/RT release: collect wins");
 
+        c = new Controls();
+        float belowRelease = Math.nextDown(0.05f);
+        float aboveRelease = 0.05f;
+        float belowFull = 0.95f;
+        float aboveFull = Math.nextUp(0.95f);
+        c.tick(belowFull, belowRelease);
+        sequence(!c.rig.intake.is_scoring_requested() && !c.rig.intake.is_shooting_requested(),
+                "float samples below the original double thresholds stay inactive");
+        c.tick(aboveFull, aboveRelease);
+        sequence(c.rig.intake.is_scoring_requested() && c.rig.intake.is_shooting_requested(),
+                "next representable threshold samples preserve full-press and light-shot edges");
+        c.tick(aboveRelease, belowRelease);
+        sequence(!c.rig.intake.is_shooting_requested(), "right trigger releases only below its threshold");
+        c.tick(aboveFull, belowRelease);
+        sequence(!c.rig.intake.is_scoring_requested(), "partial left release cannot rearm its full-press latch");
+        c.tick(belowRelease, belowRelease);
+        c.tick(aboveFull, belowRelease);
+        sequence(c.rig.intake.is_scoring_requested(), "left trigger rearms after crossing the release threshold");
+
         Rig r = new Rig(); r.intake.loaded = true; r.intake.collect(); r.shooter.update(9, 9, true);
         sequence(r.shooter.get_state() == Shooter.State.PREPARE && r.intake.get_intake_power() == 0, "loaded full stops collection");
         r.shooter.prepare_shot(); r.intake.loaded = false; r.shooter.update();
@@ -232,6 +251,160 @@ public final class PollenFlowChecks {
         close(rig.intake.get_transfer_power(), 0, "STOP transfer");
     }
 
+    private static void dual_encoder_feedback() throws Exception {
+        double ticksPerRpm = Shooter.ENCODER_TICKS_PER_REV / 60.0;
+        double[] rightVelocity = {3200 * ticksPerRpm};
+        Rig rig = new Rig(rightVelocity);
+        rig.velocity[0] = 2800 * ticksPerRpm;
+        rig.shooter.update(9, 9, true);
+        close(rig.shooter.get_current_rpm(), 3000, "both encoders contribute equally to RPM");
+        check(rig.shooter.ready_to_feed(), "averaged RPM controls readiness");
+        rig.velocity[0] = 2600 * ticksPerRpm;
+        rightVelocity[0] = 3600 * ticksPerRpm;
+        rig.shooter.update();
+        close(rig.shooter.get_current_rpm(), 3100, "average also feeds the custom controller");
+        close(rig.flywheelPower[0], 0, "averaged overspeed cuts left power");
+        close(rig.rightFlywheelPower[0], 0, "averaged overspeed cuts right power");
+
+        for (double fault : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            rig.velocity[0] = fault;
+            rightVelocity[0] = 2000 * ticksPerRpm;
+            rig.shooter.update();
+            check(rig.shooter.velocity_valid(), "right encoder alone is usable");
+            close(rig.shooter.get_current_rpm(), 2000, "invalid left reading is excluded");
+            close(rig.flywheelPower[0], 1, "right feedback spins up both motors");
+            close(rig.rightFlywheelPower[0], 1, "right feedback reaches paired motor");
+            rig.velocity[0] = 3500 * ticksPerRpm;
+            rightVelocity[0] = fault;
+            rig.shooter.update();
+            check(rig.shooter.velocity_valid(), "left encoder alone is usable");
+            close(rig.shooter.get_current_rpm(), 3500, "invalid right reading is excluded");
+            close(rig.flywheelPower[0], 0, "left feedback cuts overspeed power");
+            close(rig.rightFlywheelPower[0], 0, "left feedback cuts paired power");
+        }
+        rig.velocity[0] = Double.MAX_VALUE;
+        rightVelocity[0] = Double.MAX_VALUE;
+        rig.shooter.update();
+        check(rig.shooter.velocity_valid() && Double.isFinite(rig.shooter.get_current_rpm()),
+                "averaging finite readings cannot overflow");
+        int leftReads = rig.flywheelReads[0], rightReads = rig.rightFlywheelReads[0];
+        rig.shooter.get_current_rpm();
+        rig.shooter.velocity_valid();
+        rig.shooter.ready_to_feed();
+        rig.shooter.feed_status();
+        check(leftReads == 9 && rightReads == 9, "one hardware read per encoder per update");
+        check(rig.flywheelReads[0] == leftReads && rig.rightFlywheelReads[0] == rightReads,
+                "status and readiness reuse both cached samples");
+        rig.velocity[0] = 0;
+        rightVelocity[0] = 0;
+        rig.shooter.update();
+        set(rig.shooter, Shooter.class, "integralSum", 0.25);
+        set(rig.shooter, Shooter.class, "lastError", 12.5);
+        double time = field(Shooter.class, "lastTime").getDouble(rig.shooter);
+        int leftWrites = rig.flywheelWrites[0], rightWrites = rig.rightFlywheelWrites[0];
+        for (double leftFault : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+            for (double rightFault : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+                rig.velocity[0] = leftFault;
+                rightVelocity[0] = rightFault;
+                rig.shooter.update();
+                check(!rig.shooter.velocity_valid() && !rig.shooter.ready_to_feed(), "two invalid encoders block readiness");
+                close(rig.shooter.get_current_rpm(), 0, "two invalid readings preserve last accepted RPM");
+                close(rig.flywheelPower[0], 1, "two invalid readings hold nonzero left power");
+                close(rig.rightFlywheelPower[0], 1, "two invalid readings hold nonzero right power");
+                check(rig.flywheelWrites[0] == leftWrites && rig.rightFlywheelWrites[0] == rightWrites,
+                        "repeated invalid pairs do not write either motor");
+                close(field(Shooter.class, "integralSum").getDouble(rig.shooter), 0.25, "retain nonzero integration");
+                close(field(Shooter.class, "lastError").getDouble(rig.shooter), 12.5, "retain previous error");
+                close(field(Shooter.class, "lastTime").getDouble(rig.shooter), time, "retain controller timestamp");
+            }
+        }
+        rig.velocity[0] = 3500 * ticksPerRpm;
+        rig.shooter.update();
+        check(rig.shooter.velocity_valid(), "one returning encoder resumes regulation");
+        close(rig.flywheelPower[0], 0, "returning left feedback regulates both motors");
+        close(rig.rightFlywheelPower[0], 0, "returning left feedback reaches paired motor");
+        rig.velocity[0] = Double.NaN;
+        rightVelocity[0] = 2000 * ticksPerRpm;
+        rig.shooter.update();
+        close(rig.shooter.get_current_rpm(), 2000, "right-only feedback can replace left-only feedback");
+        close(rig.flywheelPower[0], 1, "returning right feedback restores spin-up");
+        close(rig.rightFlywheelPower[0], 1, "returning right feedback reaches paired motor");
+    }
+
+    private static void encoder_sample_recovery() throws Exception {
+        for (Shooter.State state : Shooter.State.values()) {
+            for (double fault : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
+                Rig rig = new Rig();
+                if (state == Shooter.State.PREPARE) rig.shooter.prepare_shot();
+                if (state == Shooter.State.SHOOT) {
+                    rig.shooter.update(9, 9, true);
+                    rig.shooter.shoot();
+                }
+                rig.velocity[0] = 0;
+                rig.shooter.update(9, 9, true);
+                close(rig.flywheelPower[0], 1, "spin-up power before bad sample");
+                close(rig.rightFlywheelPower[0], 1, "paired spin-up power before bad sample");
+                int leftWrites = rig.flywheelWrites[0], rightWrites = rig.rightFlywheelWrites[0];
+                double integral = field(Shooter.class, "integralSum").getDouble(rig.shooter);
+                double error = field(Shooter.class, "lastError").getDouble(rig.shooter);
+                double time = field(Shooter.class, "lastTime").getDouble(rig.shooter);
+                rig.velocity[0] = fault;
+                rig.shooter.update(9, 9, true);
+                check(rig.shooter.get_state() == state && !rig.shooter.velocity_valid()
+                        && !rig.shooter.ready_to_feed(), "bad encoder sample does not authorize a new shot or change state");
+                check(rig.flywheelWrites[0] == leftWrites && rig.rightFlywheelWrites[0] == rightWrites,
+                        "bad sample skips both motor writes");
+                close(rig.flywheelPower[0], 1, "bad sample retains left power");
+                close(rig.rightFlywheelPower[0], 1, "bad sample retains right power");
+                close(field(Shooter.class, "integralSum").getDouble(rig.shooter), integral, "skip integration");
+                close(field(Shooter.class, "lastError").getDouble(rig.shooter), error, "skip derivative history");
+                close(field(Shooter.class, "lastTime").getDouble(rig.shooter), time, "skip control timestamp");
+                close(rig.intake.get_transfer_power(), state == Shooter.State.SHOOT ? 1 : 0,
+                        "only an already active shot continues feeding");
+                rig.velocity[0] = 3500 * Shooter.ENCODER_TICKS_PER_REV / 60;
+                rig.shooter.update(9, 9, true);
+                check(rig.shooter.velocity_valid() && rig.shooter.get_current_rpm() > 3400,
+                        "next valid sample is accepted");
+                close(rig.flywheelPower[0], 0, "next valid overspeed sample regulates left motor");
+                close(rig.rightFlywheelPower[0], 0, "next valid overspeed sample regulates right motor");
+                check(rig.flywheelWrites[0] == leftWrites + 1 && rig.rightFlywheelWrites[0] == rightWrites + 1,
+                        "control resumes on next valid sample");
+                rig.velocity[0] = 0;
+                rig.shooter.update(9, 9, true);
+                rig.velocity[0] = fault;
+                rig.shooter.stop();
+                close(rig.flywheelPower[0], 0, "explicit STOP overrides missing encoder");
+                close(rig.rightFlywheelPower[0], 0, "explicit STOP stops paired motor");
+                close(rig.intake.get_transfer_power(), 0, "explicit STOP still ends feed");
+            }
+        }
+        Rig zero = new Rig();
+        zero.shooter.prepare_shot();
+        zero.velocity[0] = 0;
+        zero.shooter.update(9, 9, true);
+        zero.shooter.set_target_rpm(0);
+        zero.velocity[0] = Double.NaN;
+        zero.shooter.update(9, 9, true);
+        close(zero.flywheelPower[0], 1, "two invalid encoders skip regulation even after a zero target edit");
+        close(zero.rightFlywheelPower[0], 1, "zero target edit cannot change paired power on a skipped tick");
+        zero.velocity[0] = 0;
+        zero.shooter.update(9, 9, true);
+        close(zero.flywheelPower[0], 0, "zero target applies when encoder feedback returns");
+        close(zero.rightFlywheelPower[0], 0, "zero target then stops both motors");
+        zero.shooter.set_target_rpm(3000);
+        zero.velocity[0] = 0;
+        zero.shooter.update(9, 9, true);
+        zero.shooter.set_bypass_enabled(false);
+        zero.velocity[0] = Double.NaN;
+        zero.shooter.update(Double.NaN, 9, false);
+        close(zero.flywheelPower[0], 1, "two invalid encoders skip regulation with an unavailable target");
+        close(zero.rightFlywheelPower[0], 1, "unavailable target does not change power on a skipped tick");
+        zero.velocity[0] = 0;
+        zero.shooter.update(Double.NaN, 9, false);
+        close(zero.flywheelPower[0], 0, "unavailable target stops motors after feedback returns");
+        close(zero.rightFlywheelPower[0], 0, "unavailable target then stops both motors");
+    }
+
     private static void deferred_shot_targets() throws Exception {
         Rig rig = new Rig();
         rig.shooter.update(9, 9, true);
@@ -264,17 +437,23 @@ public final class PollenFlowChecks {
         final GivenIntake intake = new GivenIntake();
         final Shooter shooter = new Shooter();
         final double[] velocity = {3000 * Shooter.ENCODER_TICKS_PER_REV / 60}, flywheelPower = {0};
-        final int[] flywheelWrites = {0}, hoodWrites = {0};
+        final double[] rightFlywheelPower = {0};
+        final int[] flywheelWrites = {0}, rightFlywheelWrites = {0}, hoodWrites = {0};
+        final int[] flywheelReads = {0}, rightFlywheelReads = {0};
         Rig() throws Exception {
+            this(null);
+        }
+        Rig(double[] rightVelocity) throws Exception {
             set(intake, Intake.class, "intakeMotor", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.01));
             set(intake, Intake.class, "transferMotor", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.01));
-            set(shooter, Shooter.class, "shooterMotorLeft", new CachedMotor(motor(velocity, flywheelPower, flywheelWrites), 0.002));
-            set(shooter, Shooter.class, "shooterMotorRight", new CachedMotor(motor(new double[]{0}, new double[]{0}), 0.002));
-            set(shooter, Shooter.class, "servoHood", (Servo) Proxy.newProxyInstance(
+            set(shooter, Shooter.class, "shooterMotorLeft", new CachedMotor(motor(velocity, flywheelPower, flywheelWrites, flywheelReads), 0.002));
+            set(shooter, Shooter.class, "shooterMotorRight", new CachedMotor(motor(rightVelocity == null ? velocity : rightVelocity,
+                    rightFlywheelPower, rightFlywheelWrites, rightFlywheelReads), 0.002));
+            set(shooter, Shooter.class, "servoHood", new CachedServo((Servo) Proxy.newProxyInstance(
                     Servo.class.getClassLoader(), new Class<?>[]{Servo.class}, (p, m, a) -> {
                         if (m.getName().equals("setPosition")) hoodWrites[0]++;
                         return null;
-                    }));
+                    }), 0.005));
             set(shooter, Shooter.class, "intakeSubsystem", intake);
             shooter.set_alliance(Alliance.RED);
             shooter.set_bypass_enabled(true);
@@ -285,18 +464,19 @@ public final class PollenFlowChecks {
     private static final class Controls extends Main {
         final Rig rig = new Rig();
         final Gamepad one = new Gamepad(), two = new Gamepad();
-        final InputManager manager;
         Controls() throws Exception {
+            gamepad1 = new Gamepad();
+            gamepad2 = new Gamepad();
             set(this, Main.class, "shooterSubsystem", rig.shooter);
             set(this, Main.class, "intakeSubsystem", rig.intake);
             set(this, Main.class, "flowerIntakeSubsystem", new FlowerIntake());
-            Method register = Main.class.getDeclaredMethod("register_controls");
-            register.setAccessible(true); register.invoke(this);
-            manager = (InputManager) field(AbstractTeleOp.class, "inputManager").get(this);
         }
         void tick(float left, float right) {
             one.left_trigger = left; one.right_trigger = right;
-            manager.update(one, two); rig.shooter.update(9, 9, true);
+            gamepad1.copy(one);
+            gamepad2.copy(two);
+            update_controls();
+            rig.shooter.update(9, 9, true);
         }
     }
 
@@ -305,9 +485,13 @@ public final class PollenFlowChecks {
     }
 
     private static DcMotorEx motor(double[] velocity, double[] power, int[] writes) {
+        return motor(velocity, power, writes, new int[]{0});
+    }
+
+    private static DcMotorEx motor(double[] velocity, double[] power, int[] writes, int[] reads) {
         return (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(), new Class<?>[]{DcMotorEx.class},
                 (p, m, a) -> {
-                    if (m.getName().equals("getVelocity")) return velocity[0];
+                    if (m.getName().equals("getVelocity")) { reads[0]++; return velocity[0]; }
                     if (m.getName().equals("setPower")) { power[0] = (double) a[0]; writes[0]++; }
                     return null;
                 });

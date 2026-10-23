@@ -19,7 +19,8 @@ public final class LimelightNeuralNetworkTrainer extends LinearOpMode {
             telemetry.addLine("Gamepad 2: dpad left snapshot; dpad right toggle every 2 seconds");
             telemetry.update();
             waitForStart();
-            boolean leftWasDown = false, rightWasDown = false;
+            gamepad2.resetEdgeDetection();
+            gamepad2.copy(gamepad2);
             long statusNanos = 0;
             while (opModeIsActive()) {
                 camera.update(VisionPose.ZERO);
@@ -27,10 +28,8 @@ public final class LimelightNeuralNetworkTrainer extends LinearOpMode {
                     camera.update_full(VisionPose.ZERO);
                     statusNanos = System.nanoTime();
                 }
-                if (gamepad2.dpad_left && !leftWasDown) trainer.take_snapshot();
-                if (gamepad2.dpad_right && !rightWasDown) trainer.toggle_auto_capture();
-                leftWasDown = gamepad2.dpad_left;
-                rightWasDown = gamepad2.dpad_right;
+                if (gamepad2.dpadLeftWasPressed()) trainer.take_snapshot();
+                if (gamepad2.dpadRightWasPressed()) trainer.toggle_auto_capture();
                 trainer.update();
                 camera.telemetry(telemetry);
                 trainer.telemetry(telemetry);

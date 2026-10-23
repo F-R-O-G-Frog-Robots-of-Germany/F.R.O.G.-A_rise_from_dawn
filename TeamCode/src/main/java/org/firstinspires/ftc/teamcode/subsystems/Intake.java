@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.subsystems;
 
+import org.firstinspires.ftc.teamcode.core.control.OpModeCleanup;
+
 import static org.firstinspires.ftc.teamcode.core.units.Units.Length.mm;
 
 import com.qualcomm.robotcore.hardware.ColorRangeSensor;
@@ -223,8 +225,7 @@ public class Intake {
         // Do not reuse a pre-shot full sample after pollen may have left the robot.
         if (transferMode == TransferMode.FORWARD) sensorReadingsInitialized = false;
         shotRequested = false;
-        off();
-        transfer_off();
+        OpModeCleanup.run(null, this::off, this::transfer_off);
     }
 
     public void stop() {
@@ -232,8 +233,7 @@ public class Intake {
         sensorReadingsInitialized = false;
         scoringMode = ScoringMode.COLLECT;
         shotRequested = false;
-        off();
-        transfer_off();
+        OpModeCleanup.run(null, this::off, this::transfer_off);
     }
 
     /** SHOOT mode means preparation, not immediate transfer. A held shot keeps priority over mode edits. */

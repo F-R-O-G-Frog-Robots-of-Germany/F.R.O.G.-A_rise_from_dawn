@@ -21,18 +21,11 @@ import org.firstinspires.ftc.teamcode.limelight.VisionPose;
 @Disabled
 @TeleOp(name = "Butine planner test", group = "Limelight")
 public final class ButineTest extends LinearOpMode {
-    private final boolean[] previous = new boolean[20];
     private final Butine.Params params = new Butine.Params();
     private Butine.Plan plan;
     private boolean synthetic;
     private String comparison = "Y to compare greedy and lookahead";
     private List<ButineRunner.Leg> inspected = new ArrayList<>();
-
-    private boolean pressed(int index, boolean down) {
-        boolean edge = down && !previous[index];
-        previous[index] = down;
-        return edge;
-    }
 
     @Override public void runOpMode() throws InterruptedException {
         Follower follower = null;
@@ -53,7 +46,10 @@ public final class ButineTest extends LinearOpMode {
             telemetry.setMsTransmissionInterval(100);
             telemetry.addLine("Bench start pose 72,72,0: correct before driving. This test drives; intake is caller-owned.");
             telemetry.update();
+            gamepad2.setTriggerThreshold(Math.nextUp(0.5f));
             waitForStart();
+            gamepad2.resetEdgeDetection();
+            gamepad2.copy(gamepad2);
             boolean followedThisHold = false;
             long statusNanos = 0;
             while (opModeIsActive()) {
@@ -75,52 +71,60 @@ public final class ButineTest extends LinearOpMode {
                 }
                 if (!synthetic) map.update();
                 runner.update();
+                // Consume controls while driving too, so they cannot replay after the run.
+                boolean solve = gamepad2.aWasPressed();
+                boolean solveFullLoad = gamepad2.bWasPressed();
+                boolean compare = gamepad2.yWasPressed();
+                boolean inject = gamepad2.xWasPressed();
+                boolean clear = gamepad2.backWasPressed();
+                boolean moreLookahead = gamepad2.dpadUpWasPressed();
+                boolean lessLookahead = gamepad2.dpadDownWasPressed();
+                boolean moreDiscount = gamepad2.dpadRightWasPressed();
+                boolean lessDiscount = gamepad2.dpadLeftWasPressed();
+                boolean moreCapacity = gamepad2.rightBumperWasPressed();
+                boolean lessCapacity = gamepad2.leftBumperWasPressed();
+                boolean setDepot = gamepad2.rightStickButtonWasPressed();
+                boolean inspect = gamepad2.leftStickButtonWasPressed();
+                boolean moreTime = gamepad2.rightTriggerWasPressed();
+                boolean lessTime = gamepad2.leftTriggerWasPressed();
                 if (!runner.is_busy()) {
-                    if (pressed(0, gamepad2.a)) plan = Butine.solve(map.snapshot(), here, depot, params);
-                    if (pressed(1, gamepad2.b)) {
-                        Butine.Params uncapped = new Butine.Params(params);
-                        uncapped.capacity = Butine.POSSESSION_LIMIT;
-                        plan = Butine.solve(map.snapshot(), here, depot, uncapped);
+                    if (solve) plan = Butine.solve(map.snapshot(), here, depot, params);
+                    if (solveFullLoad) {
+                        params.capacity = Butine.POSSESSION_LIMIT;
+                        plan = Butine.solve(map.snapshot(), here, depot, params);
                     }
-                    if (pressed(2, gamepad2.y)) {
+                    if (compare) {
                         int runs = Math.max(2, params.lookaheadRuns);
                         double[] greedy = simulate(map.snapshot(), depot, 1, runs);
                         double[] ahead = simulate(map.snapshot(), depot, params.lookaheadRuns, runs);
                         comparison = "greedy " + greedy[0] + " s / " + (int) greedy[1]
                                 + "; lookahead " + ahead[0] + " s / " + (int) ahead[1];
                     }
-                    if (pressed(3, gamepad2.x)) { inject_synthetic(map); runner.clear_unreachable(); plan = null; }
-                    if (pressed(4, gamepad2.back)) { map.clear(); synthetic = false; runner.clear_unreachable(); plan = null; }
-                    if (pressed(5, gamepad2.dpad_up)) params.lookaheadRuns = Math.min(Butine.MAX_RUNS, params.lookaheadRuns + 1);
-                    if (pressed(6, gamepad2.dpad_down)) params.lookaheadRuns = Math.max(1, params.lookaheadRuns - 1);
-                    if (pressed(7, gamepad2.dpad_right)) params.discount = Math.min(1, params.discount + 0.05);
-                    if (pressed(8, gamepad2.dpad_left)) params.discount = Math.max(0, params.discount - 0.05);
-                    if (pressed(9, gamepad2.right_bumper)) params.capacity = Math.min(Butine.POSSESSION_LIMIT, params.capacity + 1);
-                    if (pressed(10, gamepad2.left_bumper)) params.capacity = Math.max(1, params.capacity - 1);
-                    if (pressed(11, gamepad2.right_stick_button)) depot = here;
-                    if (pressed(12, gamepad2.left_stick_button) && plan != null && plan.fittingRuns > 0) {
+                    if (inject) { inject_synthetic(map); runner.clear_unreachable(); plan = null; }
+                    if (clear) { map.clear(); synthetic = false; runner.clear_unreachable(); plan = null; }
+                    if (moreLookahead) params.lookaheadRuns = Math.min(Butine.MAX_RUNS, params.lookaheadRuns + 1);
+                    if (lessLookahead) params.lookaheadRuns = Math.max(1, params.lookaheadRuns - 1);
+                    if (moreDiscount) params.discount = Math.min(1, params.discount + 0.05);
+                    if (lessDiscount) params.discount = Math.max(0, params.discount - 0.05);
+                    if (moreCapacity) params.capacity = Math.min(Butine.POSSESSION_LIMIT, params.capacity + 1);
+                    if (lessCapacity) params.capacity = Math.max(1, params.capacity - 1);
+                    if (setDepot) depot = here;
+                    if (inspect && plan != null && plan.fittingRuns > 0) {
                         try {
-                            inspected = ButineRunner.build_run_legs(plan.runs[0], here, depot, params.kinematics, plan.field);
+                            inspected = ButineRunner.build_run_legs(plan.runs[0], here, depot,
+                                    params.kinematics, plan.field);
                         } catch (IllegalArgumentException blockedRoute) {
                             inspected = new ArrayList<>();
                             comparison = "Inspection unavailable: " + blockedRoute.getMessage();
                         }
                     }
-                    if (pressed(13, gamepad2.right_trigger > 0.5)) params.remainingS += 2.5;
-                    if (pressed(14, gamepad2.left_trigger > 0.5)) params.remainingS = Math.max(2.5, params.remainingS - 2.5);
+                    if (moreTime) params.remainingS += 2.5;
+                    if (lessTime) params.remainingS = Math.max(2.5, params.remainingS - 2.5);
                     if (requested && !followedThisHold && plan != null && plan.fittingRuns > 0) {
                         Butine.Params runParams = new Butine.Params(params);
                         followedThisHold = true;
                         runner.run_butine(depot, runParams, 1.0);
                     }
-                } else {
-                    // Observe releases while driving so a held button is not replayed after the run.
-                    pressed(0, gamepad2.a); pressed(1, gamepad2.b); pressed(2, gamepad2.y);
-                    pressed(3, gamepad2.x); pressed(4, gamepad2.back); pressed(5, gamepad2.dpad_up);
-                    pressed(6, gamepad2.dpad_down); pressed(7, gamepad2.dpad_right); pressed(8, gamepad2.dpad_left);
-                    pressed(9, gamepad2.right_bumper); pressed(10, gamepad2.left_bumper);
-                    pressed(11, gamepad2.right_stick_button); pressed(12, gamepad2.left_stick_button);
-                    pressed(13, gamepad2.right_trigger > 0.5); pressed(14, gamepad2.left_trigger > 0.5);
                 }
                 camera.telemetry(telemetry);
                 runner.telemetry(telemetry);

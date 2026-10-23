@@ -50,20 +50,20 @@ public class BothFlowersNoGarden extends AbstractAuto {
         queue_shot(SHOT_DURATION_SECONDS);
 
         // Switch to the upper hive and deliver both flower loads before parking.
-        queue_intake_path(both_flowers_no_garden_paths.far_flower_pick_up(START,
+        queue_intake_path(tangent_path(START,
                 FAR_FLOWER_PICK_UP_CONTROL1, FAR_FLOWER_PICK_UP_CONTROL2,
                 FAR_FLOWER_PICK_UP_CONTROL3, FAR_FLOWER_PICK_UP), FAR_LOWER_FLOWERINTAKE_AFTER);
-        queue_shoot_path(shoot_in_upper_hive(FAR_FLOWER_PICK_UP,
+        queue_shoot_path(shoot_in_hive(FAR_FLOWER_PICK_UP,
                 SHOOT_FROM_FAR_FLOWER_CONTROL1, SHOOT_FROM_FAR_FLOWER_CONTROL2,
                 SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
-        queue_intake_path(both_flowers_no_garden_paths.mid_flower_pick_up(SHOOT_IN_UPPER_HIVE,
+        queue_intake_path(tangent_path(SHOOT_IN_UPPER_HIVE,
                 MID_FLOWER_PICK_UP_CONTROL1, MID_FLOWER_PICK_UP_CONTROL2,
                 MID_FLOWER_PICK_UP), MID_LOWER_FLOWERINTAKE_AFTER);
-        queue_shoot_path(shoot_in_upper_hive(MID_FLOWER_PICK_UP,
+        queue_shoot_path(shoot_in_hive(MID_FLOWER_PICK_UP,
                 SHOOT_FROM_MID_FLOWER_CONTROL, SHOOT_FROM_MID_FLOWER_CONTROL2,
                 SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
-        queue_path(both_flowers_no_garden_paths.park(SHOOT_IN_UPPER_HIVE, PARK_CONTROL1, PARK));
+        queue_path(tangent_path(SHOOT_IN_UPPER_HIVE, PARK_CONTROL1, PARK));
     }
 }

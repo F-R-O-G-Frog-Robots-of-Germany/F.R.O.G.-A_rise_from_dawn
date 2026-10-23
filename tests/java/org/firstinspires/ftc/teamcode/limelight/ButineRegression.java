@@ -8,11 +8,12 @@ import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
-/** Standalone, hardware-free regression: compile alongside Butine, Pollen and VisionPose. */
+/** Hardware-free regression: compile with Butine, Pollen, VisionPose and Pedro core. */
 public final class ButineRegression {
     private static int assertions;
 
     public static void main(String[] args) {
+        test_angle_contract();
         test_motion_model();
         test_exact_short_run();
         test_filtering_and_deadlines();
@@ -33,6 +34,37 @@ public final class ButineRegression {
 
     private static void near(double expected, double actual, String message) {
         check(Math.abs(expected - actual) < 1e-7, message + ": " + expected + " vs " + actual);
+    }
+
+    private static void test_angle_contract() {
+        double[] inputs = {-7 * Math.PI / 2, -3 * Math.PI, -5 * Math.PI / 2,
+                -Math.PI, 0, Math.PI, 5 * Math.PI / 2, 3 * Math.PI, 7 * Math.PI / 2};
+        double[] expected = {Math.PI / 2, -Math.PI, -Math.PI / 2,
+                -Math.PI, 0, Math.PI, Math.PI / 2, Math.PI, -Math.PI / 2};
+        for (int i = 0; i < inputs.length; ++i) {
+            near(expected[i], VisionPose.wrap_pi(inputs[i]), "vision signed angle " + inputs[i]);
+            near(expected[i], Butine.wrap_pi(inputs[i]), "planner signed angle " + inputs[i]);
+        }
+        check(VisionPose.wrap_pi(Math.PI) == Math.PI && Butine.wrap_pi(3 * Math.PI) == Math.PI,
+                "positive exact half-turns retain their direction");
+        check(VisionPose.wrap_pi(-Math.PI) == -Math.PI && Butine.wrap_pi(-3 * Math.PI) == -Math.PI,
+                "negative exact half-turns retain their direction");
+        check(VisionPose.wrap_pi(Math.nextDown(Math.PI)) > 0
+                        && VisionPose.wrap_pi(Math.nextUp(Math.PI)) < 0,
+                "angles on either side of the positive half-turn wrap in the correct direction");
+        check(VisionPose.wrap_pi(Math.nextDown(-Math.PI)) > 0
+                        && VisionPose.wrap_pi(Math.nextUp(-Math.PI)) < 0,
+                "angles on either side of the negative half-turn wrap in the correct direction");
+        check(Double.doubleToRawLongBits(VisionPose.wrap_pi(-0.0))
+                        == Double.doubleToRawLongBits(-0.0),
+                "angle wrapping retains signed zero");
+        for (double invalid : new double[]{Double.NaN, Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY}) {
+            check(Double.isNaN(VisionPose.wrap_pi(invalid)), "vision invalid angles return NaN");
+            boolean rejected = false;
+            try { Butine.wrap_pi(invalid); }
+            catch (IllegalArgumentException expectedFailure) { rejected = true; }
+            check(rejected, "planner invalid angles throw");
+        }
     }
 
     private static void test_motion_model() {

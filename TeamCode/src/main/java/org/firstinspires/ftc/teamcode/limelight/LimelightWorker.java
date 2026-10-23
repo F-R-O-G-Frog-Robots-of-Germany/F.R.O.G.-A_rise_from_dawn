@@ -313,14 +313,16 @@ public final class LimelightWorker {
         boolean connected = false;
         String error = "";
         try {
-            affinity = ThreadAffinity.bind_current_thread(preferredCore);
-            statistics = stats(affinity, !stopRequested, 0, 0, started, 0, 0, -1, -1);
             if (stopRequested) return;
             if (!camera.init()) {
                 failureStatus = Limelight.Status.INIT_FAILED;
                 publish(false, false, camera.get_error());
                 return;
             }
+            if (stopRequested) return;
+            // SDK start lazily creates its poller: let that child inherit the original mask.
+            affinity = ThreadAffinity.bind_current_thread(preferredCore);
+            statistics = stats(affinity, !stopRequested, 0, 0, started, 0, 0, -1, -1);
             while (!stopRequested) {
                 long loopStart = System.nanoTime(), cpuStart = cpu_nanos();
                 try {

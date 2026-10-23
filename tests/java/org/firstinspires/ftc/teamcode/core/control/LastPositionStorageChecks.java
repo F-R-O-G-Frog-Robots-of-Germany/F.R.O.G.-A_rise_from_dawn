@@ -1,13 +1,14 @@
 package org.firstinspires.ftc.teamcode.core.control;
 
 import com.pedropathing.math.Pose;
+import com.qualcomm.robotcore.util.ElapsedTime;
+import java.lang.reflect.Field;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
-import org.firstinspires.ftc.teamcode.core.units.Units.Time;
 
 public final class LastPositionStorageChecks {
     private static int checks;
 
-    public static void main(String[] args) {
+    public static void main(String[] args) throws Exception {
         for (Alliance alliance : Alliance.values()) {
             Pose valid = new Pose(10, 20, 0.5);
             LastPositionStorage.store_data(valid, alliance);
@@ -40,11 +41,22 @@ public final class LastPositionStorageChecks {
             check(LastPositionStorage.valid_data_available(), "valid handoff recovers after rejection");
             check(LastPositionStorage.get_last_position() == recovered, "recovered latest coordinates saved");
             check(LastPositionStorage.get_current_alliance() == latestAlliance, "recovered alliance saved");
-            LastPositionStorage.STORAGE_TIME = Time.ms(System.currentTimeMillis()
-                    - LastPositionStorage.DATA_VALID_DURATION.ms() - 1);
+            age_seconds(199);
+            check(LastPositionStorage.valid_data_available(), "pose remains available before 200 seconds");
+            age_seconds(201);
             check(!LastPositionStorage.valid_data_available(), "old valid pose still expires");
+            LastPositionStorage.store_data(valid, alliance);
+            check(LastPositionStorage.valid_data_available(), "new handoff resets the SDK elapsed timer");
         }
         System.out.println("Passed " + checks + " saved-position handoff checks");
+    }
+
+    private static void age_seconds(long seconds) throws Exception {
+        Field timerField = LastPositionStorage.class.getDeclaredField("storageAge");
+        timerField.setAccessible(true);
+        Field startField = ElapsedTime.class.getDeclaredField("nsStartTime");
+        startField.setAccessible(true);
+        startField.setLong(timerField.get(null), System.nanoTime() - seconds * 1_000_000_000L);
     }
 
     private static void check(boolean passed, String message) {

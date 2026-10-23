@@ -10,8 +10,9 @@ import java.util.regex.Pattern;
 
 /**
  * Optional Linux affinity for the calling Java thread, using Android's bundled Toybox.
- * Call once at worker startup, then restore in its finally block. A core is zero-based;
- * -1 keeps Android's scheduler. Affinity restricts eligible CPUs; it does not reserve a CPU.
+ * Call at a setup boundary, then restore in its finally block. Cores are zero-based;
+ * the single-core overload accepts -1 to keep Android's scheduler. A mask restricts
+ * eligible CPUs; it does not reserve CPUs or run one thread on several CPUs simultaneously.
  * Failed/unsupported commands leave a diagnostic result, so workers can still run normally.
  */
 public final class ThreadAffinity {
@@ -24,16 +25,28 @@ public final class ThreadAffinity {
     public static final class Result {
         public final boolean applied;
         public final int tid;
+        /** Single requested CPU, or -1 for a multi-CPU mask or scheduler mode. */
         public final int core;
+        /** Requested hexadecimal mask, or null when no valid CPU mask was requested. */
+        public final String requestedMask;
+        public final int coreCount;
         public final String detail;
         private final String originalMask;
         private final boolean restoreNeeded;
 
         private Result(boolean applied, int tid, int core, String detail,
                        String originalMask, boolean restoreNeeded) {
+            this(applied, tid, core, detail, originalMask, restoreNeeded,
+                    core >= 0 && core <= 1023 ? BigInteger.ONE.shiftLeft(core).toString(16) : null);
+        }
+
+        private Result(boolean applied, int tid, int core, String detail,
+                       String originalMask, boolean restoreNeeded, String requestedMask) {
             this.applied = applied;
             this.tid = tid;
             this.core = core;
+            this.requestedMask = requestedMask;
+            this.coreCount = requestedMask == null ? 0 : new BigInteger(requestedMask, 16).bitCount();
             this.detail = detail;
             this.originalMask = originalMask;
             this.restoreNeeded = restoreNeeded;
@@ -49,6 +62,17 @@ public final class ThreadAffinity {
             return new Result(false, -1, core, "Kernel TID unavailable: " + e, null, false);
         }
         return bind_thread(core, tid, ThreadAffinity::run_taskset);
+    }
+
+    /** Explicit eligible CPU set, verified exactly; an empty/invalid set is rejected. */
+    public static Result bind_current_thread(int... cores) {
+        int tid;
+        try {
+            tid = Process.myTid();
+        } catch (RuntimeException | LinkageError e) {
+            return new Result(false, -1, -1, "Kernel TID unavailable: " + e, null, false);
+        }
+        return bind_thread(cores, tid, ThreadAffinity::run_taskset);
     }
 
     /** Restores only from the original thread; preserves an existing interrupt for shutdown. */
@@ -80,24 +104,40 @@ public final class ThreadAffinity {
         if (core < 0 || core > 1023 || tid <= 0) {
             return new Result(false, tid, core, "Invalid core/TID; expected core -1 or 0..1023", null, false);
         }
+        return bind_thread(new int[] {core}, tid, commands);
+    }
+
+    static Result bind_thread(int[] cores, int tid, CommandRunner commands) {
+        if (cores == null || cores.length == 0 || tid <= 0) {
+            return new Result(false, tid, -1, "A nonempty CPU set and positive TID are required", null, false);
+        }
+        BigInteger bits = BigInteger.ZERO;
+        for (int core : cores) {
+            if (core < 0 || core > 1023) {
+                return new Result(false, tid, -1, "Invalid CPU set; expected indices 0..1023", null, false);
+            }
+            bits = bits.setBit(core);
+        }
+        int core = bits.bitCount() == 1 ? bits.getLowestSetBit() : -1;
+        String requested = bits.toString(16);
         CommandResult before = commands.run("-p", Integer.toString(tid));
         String original = before.success ? parse_mask(before.output) : null;
         if (original == null) {
-            return new Result(false, tid, core, "Cannot read original affinity: " + before.output, null, false);
+            return new Result(false, tid, core, "Cannot read original affinity: " + before.output, null, false, requested);
         }
-        String requested = BigInteger.ONE.shiftLeft(core).toString(16);
         CommandResult set = commands.run("-p", requested, Integer.toString(tid));
         if (!set.success) {
             // A timed-out command may have changed affinity before its output was available.
-            return new Result(false, tid, core, "Affinity request failed: " + set.output, original, true);
+            return new Result(false, tid, core, "Affinity request failed: " + set.output, original, true, requested);
         }
         CommandResult after = commands.run("-p", Integer.toString(tid));
         String actual = after.success ? parse_mask(after.output) : null;
         boolean applied = requested.equals(actual);
         return new Result(applied, tid, core,
-                applied ? "Verified CPU " + core + " (mask " + actual + ")"
+                applied ? core >= 0 ? "Verified CPU " + core + " (mask " + actual + ")"
+                        : "Verified mask " + actual + " (" + bits.bitCount() + " eligible CPUs)"
                         : "Affinity not verified; requested " + requested + ", read " + actual + ": " + after.output,
-                original, true);
+                original, true, requested);
     }
 
     static boolean restore_thread(Result result, CommandRunner commands) {

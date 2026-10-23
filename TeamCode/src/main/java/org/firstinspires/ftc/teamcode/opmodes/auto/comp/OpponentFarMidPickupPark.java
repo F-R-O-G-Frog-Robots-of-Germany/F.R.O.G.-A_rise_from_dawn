@@ -72,14 +72,14 @@ public class OpponentFarMidPickupPark extends AbstractAuto {
         queue_intake_path(tangent_path(START, OPPONENT_FLOWER_PICK_UP_CONTROL_1,
                 OPPONENT_FLOWER_PICK_UP_CONTROL_2, OPPONENT_FLOWER_PICK_UP), OPPONENT_FLOWER_LOWER_AFTER_SECONDS);
 
-        queue_shoot_path(shoot_in_upper_hive(OPPONENT_FLOWER_PICK_UP,
+        queue_shoot_path(shoot_in_hive(OPPONENT_FLOWER_PICK_UP,
                 SHOOT_FROM_OPPONENT_FLOWER_CONTROL_1, SHOOT_FROM_OPPONENT_FLOWER_CONTROL_2,
                 SHOOT_FROM_OPPONENT_FLOWER_CONTROL_3, SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_intake_path(tangent_path(SHOOT_IN_UPPER_HIVE, FAR_FLOWER_PICK_UP_CONTROL_1,
                 FAR_FLOWER_PICK_UP_CONTROL_2, FAR_FLOWER_PICK_UP), FAR_FLOWER_LOWER_AFTER_SECONDS);
 
-        queue_shoot_path(shoot_in_upper_hive(FAR_FLOWER_PICK_UP, SHOOT_FROM_FAR_FLOWER_CONTROL_1,
+        queue_shoot_path(shoot_in_hive(FAR_FLOWER_PICK_UP, SHOOT_FROM_FAR_FLOWER_CONTROL_1,
                 SHOOT_FROM_FAR_FLOWER_CONTROL_2, SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         // Carry the MID load into TeleOp; this export has no MID shooting path.

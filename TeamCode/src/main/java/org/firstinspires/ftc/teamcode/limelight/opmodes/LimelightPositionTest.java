@@ -19,13 +19,6 @@ import org.firstinspires.ftc.teamcode.limelight.VisionPose;
 @Disabled
 @TeleOp(name = "Limelight position test", group = "Limelight")
 public final class LimelightPositionTest extends LinearOpMode {
-    private final boolean[] previous = new boolean[14];
-    private boolean pressed(int index, boolean down) {
-        boolean edge = down && !previous[index];
-        previous[index] = down;
-        return edge;
-    }
-
     @Override public void runOpMode() throws InterruptedException {
         Follower follower = null;
         Limelight camera = new Limelight(hardwareMap);
@@ -42,7 +35,10 @@ public final class LimelightPositionTest extends LinearOpMode {
             telemetry.setMsTransmissionInterval(100);
             telemetry.addLine("Bench start pose 72,72,0: place robot there or correct the pose before use.");
             telemetry.update();
+            gamepad1.setTriggerThreshold(Math.nextUp(0.5f));
             waitForStart();
+            gamepad1.resetEdgeDetection();
+            gamepad1.copy(gamepad1);
             VisionPose reference = null;
             LimelightCalibration pinhole = new LimelightCalibration();
             LimelightCalibration quadratic = new LimelightCalibration();
@@ -61,28 +57,28 @@ public final class LimelightPositionTest extends LinearOpMode {
                     statusNanos = System.nanoTime();
                 }
                 map.update();
-                if (pressed(0, gamepad1.a)) reference = here;
-                if (pressed(1, gamepad1.b)) reference = null;
-                if (pressed(2, gamepad1.x)) details = !details;
-                if (pressed(3, gamepad1.y)) map.clear();
-                if (pressed(4, gamepad1.back)) camera.set_pipeline(camera.pipeline() == Limelight.DETECTOR_PIPELINE
+                if (gamepad1.aWasPressed()) reference = here;
+                if (gamepad1.bWasPressed()) reference = null;
+                if (gamepad1.xWasPressed()) details = !details;
+                if (gamepad1.yWasPressed()) map.clear();
+                if (gamepad1.backWasPressed()) camera.set_pipeline(camera.pipeline() == Limelight.DETECTOR_PIPELINE
                         ? Limelight.APRILTAG_PIPELINE : Limelight.DETECTOR_PIPELINE);
-                if (pressed(5, gamepad1.start)) camera.calibration.usePinholeRange = !camera.calibration.usePinholeRange;
-                if (pressed(6, gamepad1.left_trigger > 0.5)) camera.calibration.cameraHeightIn =
+                if (gamepad1.startWasPressed()) camera.calibration.usePinholeRange = !camera.calibration.usePinholeRange;
+                if (gamepad1.leftTriggerWasPressed()) camera.calibration.cameraHeightIn =
                         Math.max(1, camera.calibration.cameraHeightIn - 0.5);
-                if (pressed(7, gamepad1.right_trigger > 0.5)) camera.calibration.cameraHeightIn =
+                if (gamepad1.rightTriggerWasPressed()) camera.calibration.cameraHeightIn =
                         Math.min(60, camera.calibration.cameraHeightIn + 0.5);
-                if (pressed(8, gamepad1.left_bumper)) camera.calibration.cameraPitchDeg =
+                if (gamepad1.leftBumperWasPressed()) camera.calibration.cameraPitchDeg =
                         Math.max(0, camera.calibration.cameraPitchDeg - 1);
-                if (pressed(9, gamepad1.right_bumper)) camera.calibration.cameraPitchDeg =
+                if (gamepad1.rightBumperWasPressed()) camera.calibration.cameraPitchDeg =
                         Math.min(89, camera.calibration.cameraPitchDeg + 1);
-                if (pressed(10, gamepad1.dpad_up)) {
+                if (gamepad1.dpadUpWasPressed()) {
                     VisionPose center = reference == null ? new VisionPose(72, 72, 0) : reference;
                     map.inject(new VisionPose(center.x + 24, center.y, 0), 0.9, 100);
                     map.inject(new VisionPose(center.x - 24, center.y, 0), 0.9, 100);
                     map.inject(new VisionPose(center.x, center.y + 24, 0), 0.9, 100);
                 }
-                if (pressed(11, gamepad1.dpad_down)) {
+                if (gamepad1.dpadDownWasPressed()) {
                     map.inject(new VisionPose(72, 72, 0), 0.9, 100);
                     map.inject(new VisionPose(36, 36, 0), 0.9, 100);
                     map.inject(new VisionPose(108, 108, 0), 0.9, 100);

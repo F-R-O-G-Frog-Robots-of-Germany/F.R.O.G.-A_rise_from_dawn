@@ -56,27 +56,27 @@ public class SoloWithSteal extends AbstractAuto {
         queue_shot(SHOT_DURATION_SECONDS);
 
         // Two consecutive loads into upper: opponent pollen, then the far flower.
-        queue_intake_path(solo_with_steal_paths.opponent_pick_up(START, OPPONENT_PICK_UP_CONTROL1,
+        queue_intake_path(tangent_path(START, OPPONENT_PICK_UP_CONTROL1,
                 OPPONENT_PICK_UP_CONTROL2, OPPONENT_PICK_UP), OPPONENT_LOWER_FLOWERINTAKE_AFTER);
-        queue_shoot_path(shoot_in_upper_hive(OPPONENT_PICK_UP, SHOOT_FROM_OPPONENT_CONTROL1,
+        queue_shoot_path(shoot_in_hive(OPPONENT_PICK_UP, SHOOT_FROM_OPPONENT_CONTROL1,
                 SHOOT_FROM_OPPONENT_CONTROL2, SHOOT_FROM_OPPONENT_CONTROL3,
                 SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
-        queue_intake_path(solo_with_steal_paths.far_flower_pick_up(SHOOT_IN_UPPER_HIVE, FAR_FLOWER_PICK_UP_CONTROL1,
+        queue_intake_path(tangent_path(SHOOT_IN_UPPER_HIVE, FAR_FLOWER_PICK_UP_CONTROL1,
                 FAR_FLOWER_PICK_UP_CONTROL2, FAR_FLOWER_PICK_UP), FAR_LOWER_FLOWERINTAKE_AFTER);
-        queue_shoot_path(shoot_in_upper_hive(FAR_FLOWER_PICK_UP, SHOOT_FROM_FAR_FLOWER_CONTROL1,
+        queue_shoot_path(shoot_in_hive(FAR_FLOWER_PICK_UP, SHOOT_FROM_FAR_FLOWER_CONTROL1,
                 SHOOT_FROM_FAR_FLOWER_CONTROL2, SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         // Upper has received both loads; switch to lower for mid flower and garden.
-        queue_intake_path(solo_with_steal_paths.mid_flower_pick_up(SHOOT_IN_UPPER_HIVE, MID_FLOWER_PICK_UP_CONTROL1,
+        queue_intake_path(tangent_path(SHOOT_IN_UPPER_HIVE, MID_FLOWER_PICK_UP_CONTROL1,
                 MID_FLOWER_PICK_UP_CONTROL2, MID_FLOWER_PICK_UP), MID_LOWER_FLOWERINTAKE_AFTER);
-        queue_shoot_path(shoot_in_lower_hive(MID_FLOWER_PICK_UP,
+        queue_shoot_path(shoot_in_hive(MID_FLOWER_PICK_UP,
                 SHOOT_FROM_MID_FLOWER_CONTROL, SHOOT_IN_LOWER_HIVE), SHOT_DURATION_SECONDS);
 
-        queue_intake_path(solo_with_steal_paths.intake_garden(SHOOT_IN_LOWER_HIVE, INTAKE_GARDEN));
-        queue_shoot_path(shoot_in_lower_hive(INTAKE_GARDEN,
+        queue_intake_path(tangent_line_path(SHOOT_IN_LOWER_HIVE, INTAKE_GARDEN));
+        queue_shoot_path(shoot_in_hive(INTAKE_GARDEN,
                 SHOOT_GARDEN_CONTROL1, SHOOT_IN_LOWER_HIVE), SHOT_DURATION_SECONDS);
 
-        queue_path(solo_with_steal_paths.park(SHOOT_IN_LOWER_HIVE, PARK_CONTROL1, PARK));
+        queue_path(tangent_path(SHOOT_IN_LOWER_HIVE, PARK_CONTROL1, PARK));
     }
 }

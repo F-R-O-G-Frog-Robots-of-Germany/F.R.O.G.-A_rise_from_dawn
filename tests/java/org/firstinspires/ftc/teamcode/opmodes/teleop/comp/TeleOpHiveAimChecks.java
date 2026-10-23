@@ -9,7 +9,6 @@ import com.pedropathing.localization.MotionState;
 import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.Collections;
 import java.util.Map;
 import org.firstinspires.ftc.teamcode.Robot;
@@ -19,7 +18,7 @@ import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.Shooter;
 
-/** Desktop control checks using the real input listeners and Pedro holding controller. */
+/** Desktop control checks using SDK gamepad events and the Pedro holding controller. */
 public final class TeleOpHiveAimChecks {
     private static int checks;
 
@@ -77,14 +76,14 @@ public final class TeleOpHiveAimChecks {
         check(moving.drive.manual(), "forward input wins over a simultaneous A press");
 
         Harness shooting = new Harness(new Pose(9, 9, 0), Alliance.RED);
-        shooting.gamepad1.right_trigger = 1;
+        shooting.one.right_trigger = 1;
         shooting.tick(true, 0, 0, 0);
         check(shooting.shooter.get_state() == Shooter.State.SHOOT && shooting.shooter.prepareCalls == 0,
                 "aiming preserves an active shooting request");
 
         Harness reset = new Harness(new Pose(30, 30, 0), Alliance.RED);
         reset.tick(true, 0, 0, 0);
-        reset.gamepad2.dpad_right = true;
+        reset.two.dpad_right = true;
         reset.tick(false, 0, 0, 0);
         check(reset.drive.manual(), "pose reset cancels the stale hold target");
         close(reset.drive.pose().x(), 9);
@@ -103,7 +102,57 @@ public final class TeleOpHiveAimChecks {
         check(prepared.shooter.prepareCalls == 1, "A also latches preparation when state was already PREPARE");
         check_target_cache();
         check_drive_pose_faults();
+        check_input_boundaries();
         System.out.println("TeleOp hive aim checks passed: " + checks);
+    }
+
+    private static void check_input_boundaries() throws Exception {
+        Harness released = new Harness(new Pose(9, 9, 0), Alliance.RED);
+        released.one.a = true;
+        released.two.x = true;
+        released.sample_gamepads();
+        released.one.a = false;
+        released.two.x = false;
+        released.sample_gamepads();
+        released.on_start();
+        released.tick(false, 0, 0, 0);
+        check(released.drive.holdCalls == 0 && !released.shooter.is_bypass_enabled(),
+                "released INIT presses cannot leak into active controls");
+
+        Harness held = new Harness(new Pose(9, 9, 0), Alliance.RED);
+        held.one.a = true;
+        held.two.x = true;
+        held.two.right_bumper = true;
+        held.sample_gamepads();
+        held.on_start();
+        held.tick(true, 0, 0, 0);
+        check(held.drive.holdCalls == 1, "A held at START acts on the first active sample");
+        check(!held.shooter.is_bypass_enabled(), "INIT-held configuration buttons are ignored");
+        held.tick(true, 0, 0, 0);
+        check(held.drive.holdCalls == 1, "seeded held A fires only once");
+        held.two.x = false;
+        held.two.right_bumper = false;
+        held.tick(false, 0, 0, 0);
+        held.two.x = true;
+        held.two.right_bumper = true;
+        held.tick(false, 0, 0, 0);
+        check(held.shooter.is_bypass_enabled(), "released configuration controls rearm");
+        close(held.shooter.get_fixed_rpm(), Shooter.STANDARD_RPM);
+        held.tick(false, 0, 0, 0);
+        close(held.shooter.get_fixed_rpm(), Shooter.STANDARD_RPM);
+        held.two.right_bumper = false;
+        held.tick(false, 0, 0, 0);
+        held.two.right_bumper = true;
+        held.tick(false, 0, 0, 0);
+        close(held.shooter.get_fixed_rpm(), Shooter.STANDARD_RPM + 100);
+
+        Harness sticks = new Harness(new Pose(9, 9, 0), Alliance.RED);
+        sticks.tick(false, 0, -1, 0);
+        close(sticks.drivetrain.powers.forward(), 1);
+        sticks.tick(false, 1, 0, 0);
+        close(sticks.drivetrain.powers.strafe(), -1);
+        sticks.tick(false, 0, 0, 1);
+        close(sticks.drivetrain.powers.turn(), -1);
     }
 
     private static void check_drive_pose_faults() throws Exception {
@@ -193,6 +242,7 @@ public final class TeleOpHiveAimChecks {
         robot.set_alliance(Alliance.RED);
         CountingPose pose = new CountingPose(9, 9, 0);
         robot.update_targeting(pose);
+        check(robot.pose_valid(pose) && robot.pose_valid(pose), "drive guards reuse cached pose validity");
         check(pose.xReads == 2 && pose.yReads == 2 && pose.headingReads == 1,
                 "one central pose validity check plus one coordinate read for targeting");
         Shooter.HiveDistance hive = robot.get_shooter().get_target_hive();
@@ -227,6 +277,7 @@ public final class TeleOpHiveAimChecks {
     }
 
     private static final class Harness extends Main {
+        final Gamepad one = new Gamepad(), two = new Gamepad();
         final TestLocalizer localizer;
         final TestDrivetrain drivetrain = new TestDrivetrain();
         final RecordingFollower drive;
@@ -250,9 +301,6 @@ public final class TeleOpHiveAimChecks {
             field(this, Main.class, "shooterSubsystem", shooter);
             field(this, Main.class, "intakeSubsystem", intake);
             field(this, Main.class, "flowerIntakeSubsystem", new FlowerIntake());
-            Method register = Main.class.getDeclaredMethod("register_controls");
-            register.setAccessible(true);
-            register.invoke(this);
         }
 
         void move_pose(Pose pose) {
@@ -262,16 +310,22 @@ public final class TeleOpHiveAimChecks {
         }
 
         void tick(boolean a, float x, float y, float turn) {
-            gamepad1.a = a;
-            gamepad1.left_stick_x = x;
-            gamepad1.left_stick_y = y;
-            gamepad1.right_stick_x = turn;
-            inputManager.update(gamepad1, gamepad2);
+            one.a = a;
+            one.left_stick_x = x;
+            one.left_stick_y = y;
+            one.right_stick_x = turn;
+            sample_gamepads();
+            update_controls();
             before_drive_update();
             drive.update(0.02);
             currentPose = drive.pose();
             after_drive_update();
             robot.update_targeting(currentPose);
+        }
+
+        void sample_gamepads() {
+            gamepad1.copy(one);
+            gamepad2.copy(two);
         }
     }
 
@@ -291,7 +345,7 @@ public final class TeleOpHiveAimChecks {
     }
 
     private static final class TestLocalizer implements Localizer {
-        MotionState state;
+        MotionState state = MotionState.zero();
         Pose reportedPose;
         Pose pendingPose;
         boolean hasPendingPose;
@@ -299,8 +353,8 @@ public final class TeleOpHiveAimChecks {
         void pose_on_next_update(Pose pose) { pendingPose = pose; hasPendingPose = true; }
         @Override public void setPose(Pose pose) {
             reportedPose = pose;
-            // Inject a missing sample at the Localizer boundary; MotionState rejects null poses.
-            state = pose == null ? MotionState.zero() : MotionState.zero().withPose(pose);
+            // A missing reported pose tests the application boundary without constructing an invalid MotionState.
+            if (pose != null) state = MotionState.zero().withPose(pose);
         }
         @Override public Pose pose() { return reportedPose; }
         @Override public MotionState state() { return state; }
@@ -310,7 +364,7 @@ public final class TeleOpHiveAimChecks {
                 hasPendingPose = false;
             }
         }
-        @Override public void reset() { state = MotionState.zero(); reportedPose = state.pose(); }
+        @Override public void reset() { setPose(Pose.zero()); }
     }
 
     private static final class TestDrivetrain implements Drivetrain {

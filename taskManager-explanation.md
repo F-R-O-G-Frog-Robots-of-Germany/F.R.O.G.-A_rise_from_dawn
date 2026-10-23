@@ -1,5 +1,7 @@
 # `TaskManager` Explanation
 
+Historical reference: the unused `TaskManager`, `PeriodicRegistry` and `LogManager` implementation was removed during the approved cleanup on 17 October 2026. The explanation below records the former design; current competition code updates mechanisms directly in its OpMode loops.
+
 ## Overview
 
 `TaskManager` is a small, static utility used to run named background tasks for the FTC robot code. It provides four scheduling operations:

@@ -10,11 +10,11 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.RobotLog;
 import org.firstinspires.ftc.teamcode.core.control.CompConfig;
 import org.firstinspires.ftc.teamcode.core.control.CompetitionWorkers;
-import org.firstinspires.ftc.teamcode.core.control.OpModeCleanup;
+import org.firstinspires.ftc.teamcode.core.control.ControlThreadAffinity;
 import org.firstinspires.ftc.teamcode.core.control.LastPositionStorage;
 import org.firstinspires.ftc.teamcode.core.control.LoopTiming;
+import org.firstinspires.ftc.teamcode.core.control.OpModeCleanup;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
-import org.firstinspires.ftc.teamcode.core.control.TaskManager;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.core.pedro.PoseMirroring;
@@ -38,6 +38,7 @@ abstract class General extends LinearOpMode {
     protected Shooter shooterSubsystem;
     protected Intake intakeSubsystem;
     protected CompetitionWorkers workers;
+    private ControlThreadAffinity controlAffinity;
     private boolean collectionPlanned;
     private boolean collectingDynamic, collectionIntakeOn;
     private long autoStartedNanos;
@@ -57,6 +58,7 @@ abstract class General extends LinearOpMode {
     public final void runOpMode() throws InterruptedException {
         Throwable failure = null;
         try {
+            controlAffinity = create_control_affinity();
             initialize_hardware();
             actions.clear();
             collectionPlanned = false;
@@ -64,6 +66,7 @@ abstract class General extends LinearOpMode {
             workers = create_workers();
             configure_workers(workers);
             workers.start();
+            controlAffinity.bind(control_core());
             telemetry.setMsTransmissionInterval(100);
             while (opModeInInit()) {
                 follower.localizer.update();
@@ -71,6 +74,7 @@ abstract class General extends LinearOpMode {
                 shooterSelection.update(gamepad2, shooterSubsystem, telemetry);
                 if (CompConfig.init_telemetry_enabled()) {
                     telemetry.addData("Alliance", alliance);
+                    telemetry.addData("Control affinity", controlAffinity.detail());
                     workers.telemetry(telemetry);
                     telemetry.update();
                 }
@@ -112,9 +116,10 @@ abstract class General extends LinearOpMode {
                             LastPositionStorage.store_data(follower.pose(), alliance);
                         }
                     },
-                    TaskManager::stop_all,
                     () -> { if (workers != null && !workers.stop())
-                        RobotLog.ww("Competition", "Worker still finishing after bounded shutdown"); });
+                        RobotLog.ww("Competition", "Worker still finishing after bounded shutdown"); },
+                    () -> { if (controlAffinity != null && !controlAffinity.restore())
+                        RobotLog.ww("Competition", controlAffinity.detail()); });
         }
     }
 
@@ -135,8 +140,10 @@ abstract class General extends LinearOpMode {
         shooterSubsystem.init(hardwareMap, intakeSubsystem, alliance);
     }
 
-    protected boolean vision_enabled() { return planning_enabled(); }
+    protected boolean vision_enabled() { return CompConfig.VISION_ENABLED; }
     protected boolean planning_enabled() { return collectionPlanned; }
+    protected int control_core() { return CompConfig.CONTROL_CORE; }
+    protected ControlThreadAffinity create_control_affinity() { return new ControlThreadAffinity(); }
     protected CompetitionWorkers create_workers() {
         return new CompetitionWorkers(hardwareMap, follower, vision_enabled(), planning_enabled());
     }
@@ -197,13 +204,6 @@ abstract class General extends LinearOpMode {
         actions.add(() -> execute_path(path, 0, lowerFlowerIntakeAfter));
     }
 
-    protected final void queue_intake_path(Path path, double estimatedPathSeconds, double intakeLastSeconds) {
-        require_positive(estimatedPathSeconds, "estimatedPathSeconds");
-        require_non_negative(intakeLastSeconds, "intakeLastSeconds");
-        double delay = intakeLastSeconds == 0 ? -1 : Math.max(0, estimatedPathSeconds - intakeLastSeconds);
-        actions.add(() -> execute_path(path, delay, -1));
-    }
-
     protected final void queue_shoot_path(Path path, double shotDurationSeconds) {
         queue_path(path);
         queue_shot(shotDurationSeconds);
@@ -215,11 +215,13 @@ abstract class General extends LinearOpMode {
     }
 
     private void execute_path(Path path, double intakeDelaySeconds, double lowerFlowerAfter) {
+        if (workers != null) workers.cancel_drive();
         // TODO: Verify pickup success with future Limelight integration; current distance
         // sensors cannot reliably locate missed pollen. Until then, use the planned route.
         boolean[] startedIntake = {false};
         boolean[] lowered = {false};
         boolean[] raised = {false};
+        Throwable failure = null;
         try {
             run_until(() -> !follower.isBusy(), PATH_TIMEOUT_SECONDS, "path",
                     () -> follower.follow(path), elapsed -> {
@@ -236,22 +238,28 @@ abstract class General extends LinearOpMode {
                             raised[0] = true;
                         }
                     });
+        } catch (RuntimeException | Error stopped) {
+            failure = stopped;
+            throw stopped;
         } finally {
-            intakeSubsystem.off();
-            flowerIntakeSubsystem.up();
+            OpModeCleanup.run(failure, intakeSubsystem::off, flowerIntakeSubsystem::up);
         }
     }
 
     private void execute_shot(double durationSeconds) {
+        if (workers != null) workers.cancel_drive();
         // TODO: Confirm delivery/hive tilt using future Limelight integration when available.
+        Throwable failure = null;
         try {
             shooterSubsystem.prepare_shot();
             run_until(shooterSubsystem::ready_to_feed, SHOOTER_WAIT_TIMEOUT_SECONDS,
                     "flywheel speed", null, null);
             run_until(() -> false, durationSeconds, "shot duration", shooterSubsystem::shoot, null, true);
+        } catch (RuntimeException | Error stopped) {
+            failure = stopped;
+            throw stopped;
         } finally {
-            shooterSubsystem.stop_shooting();
-            intakeSubsystem.off();
+            OpModeCleanup.run(failure, shooterSubsystem::stop_shooting, intakeSubsystem::off);
         }
     }
 
@@ -347,36 +355,20 @@ abstract class General extends LinearOpMode {
 }
 
 public abstract class AbstractAuto extends General {
-    protected final SoloWithStealPaths solo_with_steal_paths = new SoloWithStealPaths();
-    protected final BothFlowersNoGardenPaths both_flowers_no_garden_paths = new BothFlowersNoGardenPaths();
-
     /** Build pickup/drive curves from corrected RED points, mirroring each once. */
     protected final Path tangent_path(Pose... RED_POINTS) {
         return Paths.curve(field_points(RED_POINTS)).tangent();
+    }
+
+    protected final Path tangent_line_path(Pose redStart, Pose redEnd) {
+        return Paths.line(field_pose(redStart), field_pose(redEnd)).tangent();
     }
 
     protected final Path constant_heading_path(Pose HEADING, Pose... RED_POINTS) {
         return Paths.curve(field_points(RED_POINTS)).constant(field_pose(HEADING));
     }
 
-    protected final Path shoot_in_upper_hive(Pose pickUp, Pose control1, Pose control2, Pose hive) {
-        return shoot_in_hive(pickUp, control1, control2, hive);
-    }
-
-    protected final Path shoot_in_upper_hive(Pose pickUp, Pose control1, Pose control2,
-                                             Pose control3, Pose hive) {
-        return shoot_in_hive(pickUp, control1, control2, control3, hive);
-    }
-
-    protected final Path shoot_in_lower_hive(Pose pickUp, Pose control, Pose hive) {
-        return shoot_in_hive(pickUp, control, hive);
-    }
-
-    protected final Path shoot_in_lower_hive(Pose pickUp, Pose control1, Pose control2, Pose hive) {
-        return shoot_in_hive(pickUp, control1, control2, hive);
-    }
-
-    private Path shoot_in_hive(Pose... redPoints) {
+    protected final Path shoot_in_hive(Pose... redPoints) {
         Pose[] fieldPoints = field_points(redPoints);
         // Finish facing the hive; the curve tangent need not point at the target.
         return Paths.curve(fieldPoints).linear(fieldPoints[0], fieldPoints[fieldPoints.length - 1]);
@@ -390,47 +382,4 @@ public abstract class AbstractAuto extends General {
         return fieldPoints;
     }
 
-    protected final class BothFlowersNoGardenPaths {
-        public Path far_flower_pick_up(Pose START, Pose CONTROL_1, Pose CONTROL_2,
-                                      Pose CONTROL_3, Pose PICK_UP) {
-            return Paths.curve(field_pose(START), field_pose(CONTROL_1),
-                    field_pose(CONTROL_2), field_pose(CONTROL_3), field_pose(PICK_UP)).tangent();
-        }
-
-        public Path mid_flower_pick_up(Pose SHOOT, Pose CONTROL_1, Pose CONTROL_2, Pose PICK_UP) {
-            return Paths.curve(field_pose(SHOOT), field_pose(CONTROL_1),
-                    field_pose(CONTROL_2), field_pose(PICK_UP)).tangent();
-        }
-
-        public Path park(Pose SHOOT, Pose CONTROL, Pose PARK) {
-            return Paths.curve(field_pose(SHOOT), field_pose(CONTROL),
-                    field_pose(PARK)).tangent();
-        }
-    }
-
-    protected final class SoloWithStealPaths {
-        public Path opponent_pick_up(Pose start, Pose control1, Pose control2, Pose pickUp) {
-            return Paths.curve(field_pose(start), field_pose(control1),
-                    field_pose(control2), field_pose(pickUp)).tangent();
-        }
-
-        public Path far_flower_pick_up(Pose shoot, Pose control1, Pose control2, Pose pickUp) {
-            return Paths.curve(field_pose(shoot), field_pose(control1),
-                    field_pose(control2), field_pose(pickUp)).tangent();
-        }
-
-        public Path mid_flower_pick_up(Pose shoot, Pose control1, Pose control2, Pose pickUp) {
-            return Paths.curve(field_pose(shoot), field_pose(control1),
-                    field_pose(control2), field_pose(pickUp)).tangent();
-        }
-
-        public Path intake_garden(Pose shoot, Pose garden) {
-            return Paths.line(field_pose(shoot), field_pose(garden)).tangent();
-        }
-
-        public Path park(Pose shoot, Pose control, Pose park) {
-            return Paths.curve(field_pose(shoot), field_pose(control),
-                    field_pose(park)).tangent();
-        }
-    }
 }

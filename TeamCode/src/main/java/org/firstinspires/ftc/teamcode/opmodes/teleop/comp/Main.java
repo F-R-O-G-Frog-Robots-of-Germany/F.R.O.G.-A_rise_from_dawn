@@ -11,7 +11,6 @@ import org.firstinspires.ftc.teamcode.core.units.Units.RobotState;
 import org.firstinspires.ftc.teamcode.Robot;
 import org.firstinspires.ftc.teamcode.core.control.CompConfig;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
-import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.opmodes.teleop.AbstractTeleOp;
 import org.firstinspires.ftc.teamcode.subsystems.FlowerIntake;
 import org.firstinspires.ftc.teamcode.subsystems.Intake;
@@ -25,9 +24,12 @@ public class Main extends AbstractTeleOp {
     private FlowerIntake flowerIntakeSubsystem;
     private double driveForward = 0, driveStrafe = 0, driveTurn = 0;
     private static final double DEADBAND = 0.05;
+    private static final double TRIGGER_RELEASE = 0.05;
+    private static final double TRIGGER_FULL_PRESS = 0.95;
     private static final long ALLIANCE_HOLD_NANOS = 3_000_000_000L;
     private final ShooterSelection shooterSelection = new ShooterSelection();
     private boolean ignoreConfigUntilReleased;
+    private boolean rightTriggerPressed, leftTriggerFullyPressed;
     private boolean aimRequested, aimingAtHive;
     private boolean allianceButtonHeld, allianceSwitchConsumed;
     private long allianceHoldStartedNanos;
@@ -42,40 +44,50 @@ public class Main extends AbstractTeleOp {
         set_telemetry_manager(robot.get_telemetry_manager());
 
         robot.update_targeting(currentPose);
-        register_controls();
     }
 
-    private void register_controls() {
-        inputManager.gamepad1.a.add_button_press_listener(() -> aimRequested = true);
-        inputManager.gamepad1.rightTrigger.add_press_listener(value -> shooterSubsystem.shoot());
-        inputManager.gamepad1.rightTrigger.add_trigger_release_listener(value -> {
+    @Override
+    protected void update_controls() {
+        driveForward = apply_deadband(-gamepad1.left_stick_y);
+        driveStrafe = apply_deadband(-gamepad1.left_stick_x);
+        driveTurn = apply_deadband(-gamepad1.right_stick_x);
+
+        if (gamepad1.left_trigger <= TRIGGER_RELEASE) {
+            leftTriggerFullyPressed = false;
+        } else if (!leftTriggerFullyPressed && gamepad1.left_trigger >= TRIGGER_FULL_PRESS) {
+            leftTriggerFullyPressed = true;
+            intakeSubsystem.toggle_score_mode();
+        }
+        boolean rightPressed = gamepad1.right_trigger > TRIGGER_RELEASE;
+        if (rightPressed && !rightTriggerPressed) {
+            shooterSubsystem.shoot();
+        } else if (!rightPressed && rightTriggerPressed) {
             shooterSubsystem.stop_shooting();
             intakeSubsystem.collect();
-        });
-        inputManager.gamepad1.leftBumper.add_button_press_listener(flowerIntakeSubsystem::toggle);
-        inputManager.gamepad1.leftTrigger.add_full_press_listener(value -> intakeSubsystem.toggle_score_mode());
-       // reserved for limelight, will force update megatag 2 as well as pollen detection and butine
-        // inputManager.gamepad1.rightBumper.add_button_press_listener(Limelight.update);
-        inputManager.gamepad1.leftStick.add_update_listener((x, y) -> {
-            driveForward = apply_deadband(y);
-            driveStrafe = apply_deadband(-x);
-        });
-        inputManager.gamepad1.rightStick.add_update_listener((x, y) -> {
-            driveTurn = apply_deadband(-x);
-        });
+        }
+        rightTriggerPressed = rightPressed;
+        if (gamepad1.leftBumperWasPressed()) flowerIntakeSubsystem.toggle();
+        if (gamepad1.aWasPressed()) aimRequested = true;
 
-        inputManager.gamepad2.dpadRight.add_button_press_listener(() -> reset_teleop_pose(9.0, 9.0));
-        inputManager.gamepad2.dpadLeft.add_button_press_listener(() -> reset_teleop_pose(9.0, 133.0));
-        inputManager.gamepad2.x.add_button_press_listener(() -> {
-            if (!ignoreConfigUntilReleased) shooterSubsystem.toggle_bypass();
-        });
-        inputManager.gamepad2.leftBumper.add_button_press_listener(() -> adjust_shooter_target_rpm(-100));
-        inputManager.gamepad2.rightBumper.add_button_press_listener(() -> adjust_shooter_target_rpm(100));
+        if (gamepad2.leftBumperWasPressed()) adjust_shooter_target_rpm(-100);
+        if (gamepad2.rightBumperWasPressed()) adjust_shooter_target_rpm(100);
+        if (gamepad2.xWasPressed() && !ignoreConfigUntilReleased) shooterSubsystem.toggle_bypass();
+        if (gamepad2.dpadRightWasPressed()) reset_teleop_pose(9.0, 9.0);
+        if (gamepad2.dpadLeftWasPressed()) reset_teleop_pose(9.0, 133.0);
+        if (!gamepad2.x && !gamepad2.left_bumper && !gamepad2.right_bumper) {
+            ignoreConfigUntilReleased = false;
+        }
     }
 
     @Override
     protected void on_start() {
         ignoreConfigUntilReleased = gamepad2.x || gamepad2.left_bumper || gamepad2.right_bumper;
+        // Discard released INIT presses, while treating buttons still held as the first active sample.
+        gamepad1.resetEdgeDetection();
+        gamepad1.copy(gamepad1);
+        gamepad2.resetEdgeDetection();
+        gamepad2.copy(gamepad2);
+        robot.start_robot();
     }
 
     @Override
@@ -87,9 +99,6 @@ public class Main extends AbstractTeleOp {
             get_telemetry_manager().addData("Shot feed", shooterSubsystem.feed_status());
             get_telemetry_manager().addData("Shooter RPM", shooterSubsystem.get_current_rpm());
             get_telemetry_manager().addData("RPM sample valid", shooterSubsystem.velocity_valid());
-        }
-        if (!gamepad2.x && !gamepad2.left_bumper && !gamepad2.right_bumper) {
-            ignoreConfigUntilReleased = false;
         }
     }
 
@@ -109,6 +118,13 @@ public class Main extends AbstractTeleOp {
     protected void before_drive_update() {
         update_alliance_selection(System.nanoTime());
         if (stop_for_invalid_pose()) return;
+        if (aimRequested || driveForward != 0 || driveStrafe != 0 || driveTurn != 0) {
+            cancel_assistance();
+        }
+        if (assistance_owns_drive()) {
+            aimingAtHive = false;
+            return;
+        }
         if (aimRequested) {
             aimRequested = false;
             aim_at_hive();
@@ -136,7 +152,8 @@ public class Main extends AbstractTeleOp {
     }
 
     private boolean stop_for_invalid_pose() {
-        if (SensorReadings.is_valid(currentPose)) return false;
+        if (robot.pose_valid(currentPose)) return false;
+        cancel_assistance();
         aimRequested = false;
         aimingAtHive = false;
         follower.stop();

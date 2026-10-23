@@ -1,5 +1,7 @@
 package org.firstinspires.ftc.teamcode.limelight;
 
+import com.pedropathing.utils.Angle;
+
 /** Field corner coordinates in inches; heading is counterclockwise radians. */
 public final class VisionPose {
     public static final VisionPose ZERO = new VisionPose(0, 0, 0);
@@ -30,10 +32,8 @@ public final class VisionPose {
 
     public static double wrap_pi(double angle) {
         if (!Double.isFinite(angle)) return Double.NaN;
-        double wrapped = angle % (2 * Math.PI);
-        if (wrapped > Math.PI) wrapped -= 2 * Math.PI;
-        if (wrapped < -Math.PI) wrapped += 2 * Math.PI;
-        return wrapped;
+        double wrapped = Angle.normalizeSigned(angle);
+        return wrapped == -Math.PI && angle > 0 ? Math.PI : wrapped;
     }
 
     static long now_ms() {

@@ -1,5 +1,7 @@
 # `taskScheduler.java` Error Report
 
+Historical report: this describes an earlier scheduler implementation. The unused scheduler and its logging/registry helpers were removed during the approved cleanup on 17 October 2026; the compiler errors below are not a description of the current repository.
+
 **File reviewed:** `TeamCode/src/main/java/org/firstinspires/ftc/teamcode/core/control/taskScheduler.java`
 
 **Verification:** `./gradlew.bat :TeamCode:compileDebugJavaWithJavac` was run. The build currently fails with 18 errors. Some errors reported by the compiler are in `LastPositionStorage.java`; they are listed only where they are separate from this file's problems.

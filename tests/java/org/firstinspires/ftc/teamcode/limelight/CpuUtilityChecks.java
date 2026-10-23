@@ -56,6 +56,51 @@ public final class CpuUtilityChecks {
         check(unreadable.calls.size() == 1, "no set if original unavailable");
         FakeCommands largeCore = new FakeCommands("ffffffffffffffff");
         check(ThreadAffinity.bind_thread(63, 42, largeCore).applied, "64-bit mask has no signed overflow");
+        multi_core_affinity_checks();
+    }
+
+    private static void multi_core_affinity_checks() {
+        FakeCommands commands = new FakeCommands("ff");
+        ThreadAffinity.Result pair = ThreadAffinity.bind_thread(new int[] {3, 1, 3}, 42, commands);
+        check(pair.applied && pair.core == -1 && pair.coreCount == 2, "multiple eligible CPUs are not a single-core assignment");
+        check("a".equals(pair.requestedMask), "unordered sparse CPU set normalizes duplicate indices");
+        check(commands.calls.equals(Arrays.asList("-p 42", "-p a 42", "-p 42")), "mask applied to one native thread only");
+        check(ThreadAffinity.restore_thread(pair, commands) && "ff".equals(commands.mask),
+                "multi-CPU request restores the complete original mask");
+
+        ThreadAffinity.Result triple = ThreadAffinity.bind_thread(new int[] {0, 1, 2}, 42, commands);
+        check(triple.applied && triple.coreCount == 3 && "7".equals(triple.requestedMask), "three eligible CPUs verified");
+        check(ThreadAffinity.restore_thread(triple, commands), "three-CPU mask can be restored");
+        ThreadAffinity.Result singleton = ThreadAffinity.bind_thread(new int[] {2, 2}, 42, commands);
+        check(singleton.applied && singleton.core == 2 && singleton.coreCount == 1, "singleton set retains single-CPU metadata");
+        check(ThreadAffinity.restore_thread(singleton, commands), "singleton set restores original");
+
+        int previous = commands.calls.size();
+        check(!ThreadAffinity.bind_thread(new int[0], 42, commands).applied, "empty eligible set rejected");
+        check(!ThreadAffinity.bind_thread((int[]) null, 42, commands).applied, "null eligible set rejected");
+        check(!ThreadAffinity.bind_thread(new int[] {0, -1}, 42, commands).applied, "scheduler sentinel cannot enter explicit set");
+        check(!ThreadAffinity.bind_thread(new int[] {0, 1024}, 42, commands).applied, "oversized CPU index rejected");
+        check(!ThreadAffinity.bind_thread(new int[] {0, 1}, 0, commands).applied, "multi-CPU request rejects invalid TID");
+        check(commands.calls.size() == previous, "invalid sets never invoke affinity commands");
+
+        FakeCommands narrowed = new FakeCommands("f");
+        narrowed.overrideReadback = "3";
+        ThreadAffinity.Result partial = ThreadAffinity.bind_thread(new int[] {0, 1, 2}, 42, narrowed);
+        check(!partial.applied && "7".equals(partial.requestedMask), "kernel subset is an unverified comparison mode");
+        narrowed.overrideReadback = null;
+        check(ThreadAffinity.restore_thread(partial, narrowed) && "f".equals(narrowed.mask),
+                "unverified narrowed mask still restores the original");
+
+        FakeCommands rejected = new FakeCommands("f");
+        rejected.failSet = true;
+        ThreadAffinity.Result failure = ThreadAffinity.bind_thread(new int[] {0, 1}, 42, rejected);
+        check(!failure.applied && failure.coreCount == 2, "denied set preserves requested CPU count");
+        rejected.failSet = false;
+        check(ThreadAffinity.restore_thread(failure, rejected), "failed multi-CPU operation retains restoration state");
+        FakeCommands wide = new FakeCommands("ffffffffffffffff");
+        ThreadAffinity.Result sparse = ThreadAffinity.bind_thread(new int[] {0, 63, 1023}, 42, wide);
+        check(sparse.applied && sparse.coreCount == 3, "multi-CPU mask supports sparse high indices without truncation");
+        check(ThreadAffinity.restore_thread(sparse, wide) && "ffffffffffffffff".equals(wide.mask), "wide request restores original");
     }
 
     private static void parser_checks() {

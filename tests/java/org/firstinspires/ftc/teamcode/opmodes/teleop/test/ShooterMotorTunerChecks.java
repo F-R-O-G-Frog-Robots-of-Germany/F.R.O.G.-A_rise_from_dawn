@@ -2,20 +2,23 @@ package org.firstinspires.ftc.teamcode.opmodes.teleop.test;
 
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.Gamepad;
-import com.qualcomm.robotcore.hardware.Servo;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
+import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
+import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.subsystems.Shooter;
 
-/** Standalone JVM checks for the tuner's motor controls and applied hood commands. */
+/** Standalone JVM checks for the tuner's dual-motor commands and gamepad toggle. */
 public final class ShooterMotorTunerChecks {
     private static int checks;
 
     public static void main(String[] args) throws Exception {
         ShooterPidfTuner tuner = new ShooterPidfTuner();
         tuner.gamepad1 = new Gamepad();
+        tuner.gamepad2 = new Gamepad();
+        Gamepad buttons = new Gamepad();
         double[] velocity = {0, 0};
         double[][] pidf = {new double[4], new double[4]};
         set(tuner, "shooterMotorLeft", motor(velocity, pidf, 0));
@@ -26,7 +29,8 @@ public final class ShooterMotorTunerChecks {
 
         command(tuner, true);
         close(velocity[0], 0); close(velocity[1], 0);
-        tuner.gamepad1.start = true;
+        buttons.start = true;
+        tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
         command(tuner, true);
         double target = 4000 * Shooter.ENCODER_TICKS_PER_REV / 60.0;
@@ -34,17 +38,20 @@ public final class ShooterMotorTunerChecks {
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], target);
-        tuner.gamepad1.start = false;
-        tuner.gamepad1.x = true;
+        buttons.start = false;
+        buttons.x = true;
+        tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], 0);
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], 0);
-        tuner.gamepad1.x = false;
+        buttons.x = false;
+        tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
-        tuner.gamepad1.x = true;
+        buttons.x = true;
+        tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], target);
@@ -55,101 +62,92 @@ public final class ShooterMotorTunerChecks {
         command(tuner, true);
         close(velocity[0], 0); close(velocity[1], 0);
         set(tuner, "validTargets", true);
-        tuner.gamepad1.start = true;
+        buttons.start = true;
+        tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], 0); close(velocity[1], 0);
-        hood_commands();
+        input_boundaries();
         System.out.println("Passed " + checks + " shooter motor tuner checks");
     }
 
-    private static void hood_commands() throws Exception {
+    private static void input_boundaries() throws Exception {
         ShooterPidfTuner tuner = new ShooterPidfTuner();
-        int[] writes = {0};
-        double[] position = {Double.NaN};
-        Servo servo = (Servo) Proxy.newProxyInstance(Servo.class.getClassLoader(),
-                new Class<?>[]{Servo.class}, (proxy, method, values) -> {
-                    if (method.getName().equals("setPosition")) {
-                        position[0] = (double) values[0];
-                        writes[0]++;
-                    }
-                    return null;
-                });
-        set(tuner, "hoodServo", servo);
-        check(!(boolean) call(tuner, "hood_settled"), "uncommanded hood is not settled");
-        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
-            check(!command_hood(tuner, invalid), "invalid first hood angle rejected");
-            check(writes[0] == 0 && !(boolean) get(tuner, "hoodCommanded"),
-                    "invalid first angle sends no command");
-            check((long) get(tuner, "lastHoodCommandNanos") == 0,
-                    "invalid first angle does not start settling timer");
-        }
+        tuner.gamepad1 = new Gamepad();
+        tuner.gamepad2 = new Gamepad();
+        Gamepad one = new Gamepad(), two = new Gamepad();
+        one.start = true;
+        two.y = true;
+        two.dpad_up = true;
+        tuner.gamepad1.copy(one);
+        tuner.gamepad2.copy(two);
+        one.start = false;
+        two.y = false;
+        two.dpad_up = false;
+        tuner.gamepad1.copy(one);
+        tuner.gamepad2.copy(two);
+        call(tuner, "start_controls");
+        call(tuner, "update_controls");
+        call(tuner, "update_model_controls");
+        close((boolean) get(tuner, "shooterEnabled") ? 1 : 0, 0);
+        close((boolean) get(tuner, "distanceModelEnabled") ? 1 : 0, 0);
+        close((double) get(tuner, "manualHoodAngle"), Shooter.DEFAULT_HOOD_ANGLE_DEG);
 
-        double middleAngle = (Shooter.HOOD_MIN_ANGLE_DEG + Shooter.HOOD_MAX_ANGLE_DEG) / 2;
-        check(command_hood(tuner, middleAngle), "first finite hood angle accepted");
-        check(writes[0] == 1 && (boolean) get(tuner, "hoodCommanded"),
-                "first finite angle writes the raw servo");
-        close(position[0], Shooter.hood_angle_to_servo_position(middleAngle));
-        close((double) get(tuner, "appliedHoodPosition"), position[0]);
-        close((double) get(tuner, "appliedHoodAngle"), middleAngle);
+        one.start = true;
+        two.y = true;
+        tuner.gamepad1.copy(one);
+        tuner.gamepad2.copy(two);
+        call(tuner, "start_controls");
+        call(tuner, "update_controls");
+        call(tuner, "update_model_controls");
+        close((boolean) get(tuner, "shooterEnabled") ? 1 : 0, 1);
+        close((boolean) get(tuner, "distanceModelEnabled") ? 1 : 0, 1);
+        two.dpad_up = true;
+        tuner.gamepad2.copy(two);
+        call(tuner, "update_model_controls");
+        two.y = false;
+        tuner.gamepad2.copy(two);
+        call(tuner, "update_model_controls");
+        two.y = true;
+        tuner.gamepad2.copy(two);
+        call(tuner, "update_model_controls");
+        close((boolean) get(tuner, "distanceModelEnabled") ? 1 : 0, 0);
+        close((double) get(tuner, "manualHoodAngle"), Shooter.DEFAULT_HOOD_ANGLE_DEG);
+        two.dpad_up = false;
+        tuner.gamepad2.copy(two);
+        call(tuner, "update_model_controls");
+        two.dpad_up = true;
+        tuner.gamepad2.copy(two);
+        call(tuner, "update_model_controls");
+        close((double) get(tuner, "manualHoodAngle"), Shooter.DEFAULT_HOOD_ANGLE_DEG + 1);
 
-        long settledAt = System.nanoTime() - (Shooter.HOOD_SETTLE_TIME_MS + 1) * 1_000_000L;
-        set(tuner, "lastHoodCommandNanos", settledAt);
-        check((boolean) call(tuner, "hood_settled"), "elapsed applied command is settled");
-        check(command_hood(tuner, middleAngle), "unchanged hood angle remains accepted");
-        check(writes[0] == 1 && (long) get(tuner, "lastHoodCommandNanos") == settledAt,
-                "unchanged angle neither writes nor restarts settling timer");
-
-        double anglePerThreshold = Shooter.HOOD_POSITION_EPSILON
-                * (Shooter.HOOD_MAX_ANGLE_DEG - Shooter.HOOD_MIN_ANGLE_DEG)
-                / Math.abs(Shooter.HOOD_SERVO_AT_MAX_ANGLE - Shooter.HOOD_SERVO_AT_MIN_ANGLE);
-        for (double fraction : new double[]{0.25, 0.5, 0.75}) {
-            check(command_hood(tuner, middleAngle + fraction * anglePerThreshold),
-                    "subepsilon hood change remains accepted");
-            check(writes[0] == 1 && (long) get(tuner, "lastHoodCommandNanos") == settledAt,
-                    "subepsilon change neither writes nor restarts settling timer");
-            close((double) get(tuner, "appliedHoodAngle"), middleAngle);
-            close((double) get(tuner, "appliedHoodPosition"), position[0]);
-            check((boolean) call(tuner, "hood_settled"), "skipped change keeps settled state");
-        }
-
-        double movedAngle = middleAngle + 1.25 * anglePerThreshold;
-        long beforeCommand = System.nanoTime();
-        check(command_hood(tuner, movedAngle), "cumulative threshold crossing accepted");
-        long afterCommand = System.nanoTime();
-        check(writes[0] == 2, "cumulative movement is compared with last applied command");
-        close(position[0], Shooter.hood_angle_to_servo_position(movedAngle));
-        close((double) get(tuner, "appliedHoodPosition"), position[0]);
-        close((double) get(tuner, "appliedHoodAngle"), movedAngle);
-        long commandedAt = (long) get(tuner, "lastHoodCommandNanos");
-        check(commandedAt >= beforeCommand && commandedAt <= afterCommand,
-                "accepted movement restarts settling timer when servo is written");
-
-        set(tuner, "lastHoodCommandNanos", settledAt);
-        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
-            check(!command_hood(tuner, invalid), "invalid active hood angle rejected");
-            check(writes[0] == 2 && (long) get(tuner, "lastHoodCommandNanos") == settledAt,
-                    "invalid active angle retains applied command and settling timer");
-            close((double) get(tuner, "appliedHoodAngle"), movedAngle);
-            close((double) get(tuner, "appliedHoodPosition"), position[0]);
-        }
-
-        check(command_hood(tuner, -Double.MAX_VALUE), "finite angle below range accepted");
-        check(writes[0] == 3, "lower endpoint is written once");
-        close(position[0], Shooter.HOOD_SERVO_AT_MIN_ANGLE);
-        close((double) get(tuner, "appliedHoodAngle"), Shooter.HOOD_MIN_ANGLE_DEG);
-        set(tuner, "lastHoodCommandNanos", settledAt);
-        check(command_hood(tuner, Shooter.HOOD_MIN_ANGLE_DEG - 1), "repeated lower endpoint accepted");
-        check(writes[0] == 3 && (long) get(tuner, "lastHoodCommandNanos") == settledAt,
-                "angles clipping to same lower endpoint do not restart settling");
-        check(command_hood(tuner, Double.MAX_VALUE), "finite angle above range accepted");
-        check(writes[0] == 4, "upper endpoint is written once");
-        close(position[0], Shooter.HOOD_SERVO_AT_MAX_ANGLE);
-        close((double) get(tuner, "appliedHoodAngle"), Shooter.HOOD_MAX_ANGLE_DEG);
-        set(tuner, "lastHoodCommandNanos", settledAt);
-        check(command_hood(tuner, Shooter.HOOD_MAX_ANGLE_DEG + 1), "repeated upper endpoint accepted");
-        check(writes[0] == 4 && (long) get(tuner, "lastHoodCommandNanos") == settledAt,
-                "angles clipping to same upper endpoint do not restart settling");
+        Shooter shooter = new Shooter();
+        shooter.set_bypass_enabled(false);
+        ShooterSelection selection = new ShooterSelection();
+        Telemetry telemetry = (Telemetry) Proxy.newProxyInstance(Telemetry.class.getClassLoader(),
+                new Class<?>[]{Telemetry.class}, (proxy, method, values) -> null);
+        Gamepad input = new Gamepad(), snapshot = new Gamepad();
+        snapshot.right_bumper = true;
+        snapshot.dpad_up = true;
+        input.copy(snapshot);
+        selection.update(input, shooter, telemetry);
+        snapshot.x = true;
+        input.copy(snapshot);
+        selection.update(input, shooter, telemetry);
+        close(shooter.get_fixed_rpm(), Shooter.STANDARD_RPM);
+        close(shooter.get_fixed_hood_angle(), Shooter.DEFAULT_HOOD_ANGLE_DEG);
+        selection.update(input, shooter, telemetry);
+        close(shooter.is_bypass_enabled() ? 1 : 0, 1);
+        snapshot.right_bumper = false;
+        snapshot.dpad_up = false;
+        input.copy(snapshot);
+        selection.update(input, shooter, telemetry);
+        snapshot.right_bumper = true;
+        snapshot.dpad_up = true;
+        input.copy(snapshot);
+        selection.update(input, shooter, telemetry);
+        close(shooter.get_fixed_rpm(), Shooter.STANDARD_RPM + 100);
+        close(shooter.get_fixed_hood_angle(), Shooter.DEFAULT_HOOD_ANGLE_DEG + 1);
     }
 
     private static CachedMotor motor(double[] velocity, double[][] pidf, int index) {
@@ -170,17 +168,13 @@ public final class ShooterMotorTunerChecks {
 
     private static Object get(Object object, String name) throws Exception {
         Field field = ShooterPidfTuner.class.getDeclaredField(name);
-        field.setAccessible(true); return field.get(object);
+        field.setAccessible(true);
+        return field.get(object);
     }
 
-    private static Object call(Object object, String name) throws Exception {
+    private static void call(Object object, String name) throws Exception {
         Method method = ShooterPidfTuner.class.getDeclaredMethod(name);
-        method.setAccessible(true); return method.invoke(object);
-    }
-
-    private static boolean command_hood(ShooterPidfTuner tuner, double angle) throws Exception {
-        set(tuner, "commandedHoodAngle", angle);
-        return (boolean) call(tuner, "command_hood");
+        method.setAccessible(true); method.invoke(object);
     }
 
     private static void command(ShooterPidfTuner tuner, boolean valid) throws Exception {
@@ -193,10 +187,5 @@ public final class ShooterMotorTunerChecks {
         if (!Double.isFinite(actual) || Math.abs(actual - expected) > 1e-9) {
             throw new AssertionError("Expected " + expected + ", got " + actual);
         }
-    }
-
-    private static void check(boolean condition, String message) {
-        checks++;
-        if (!condition) throw new AssertionError(message);
     }
 }

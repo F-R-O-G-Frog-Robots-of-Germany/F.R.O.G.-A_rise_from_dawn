@@ -147,7 +147,7 @@ class ForwardVelocity extends TuningOpMode<Double> {
         while (!isStopRequested() && Math.abs(localizer.pose().x()) <= distance) {
             drivetrain.drive(new DrivePowers(1, 0, 0), true);
             localizer.update();
-            velocities.addLast(Math.abs(localizer.twist().toVector2D().x()));
+            velocities.addLast(Math.abs(localizer.twist().vx));
             velocities.removeFirst();
         }
         drivetrain.stop();
@@ -187,7 +187,7 @@ class StrafeVelocity extends TuningOpMode<Double> {
         while (!isStopRequested() && Math.abs(localizer.pose().y()) <= distance) {
             drivetrain.drive(new DrivePowers(0, 1, 0), false);
             localizer.update();
-            velocities.addLast(Math.abs(localizer.twist().toVector2D().y()));
+            velocities.addLast(Math.abs(localizer.twist().vy));
             velocities.removeFirst();
         }
         drivetrain.stop();
@@ -225,7 +225,7 @@ abstract class DecelerationTuner extends TuningOpMode<Double> {
         long previousTime = 0L;
         while (!isStopRequested()) {
             localizer.update();
-            double velocity = forward ? localizer.twist().toVector2D().x() : localizer.twist().toVector2D().y();
+            double velocity = forward ? localizer.twist().vx : localizer.twist().vy;
             if (previousTime == 0L && Math.abs(velocity) > targetVelocity) {
                 previousVelocity = velocity;
                 previousTime = System.nanoTime();
@@ -436,7 +436,7 @@ abstract class BrakingTuner extends TuningOpMode<List<Double>> {
         while (opModeIsActive() && iteration < powers.length) {
             localizer.update();
             double position = forward ? localizer.pose().x() : localizer.pose().y();
-            double signedVelocity = forward ? localizer.velocity().toVector2D().x() : localizer.velocity().toVector2D().y();
+            double signedVelocity = forward ? localizer.velocity().vx : localizer.velocity().vy;
             double direction = iteration % 2 == 0 ? 1.0 : -1.0;
             if (!braking) {
                 double target = iteration % 2 == 0 ? distance : 12.0;
@@ -528,7 +528,7 @@ class TranslationalTuner extends TuningOpMode<List<Double>> {
         while (opModeIsActive() && timer.seconds() < 1.2) {
             localizer.update();
             times.add(timer.seconds());
-            double velocity = forward ? localizer.twist().toVector2D().x() : localizer.twist().toVector2D().y();
+            double velocity = forward ? localizer.twist().vx : localizer.twist().vy;
             velocities.add(Math.abs(velocity));
         }
         drivetrain.stop();

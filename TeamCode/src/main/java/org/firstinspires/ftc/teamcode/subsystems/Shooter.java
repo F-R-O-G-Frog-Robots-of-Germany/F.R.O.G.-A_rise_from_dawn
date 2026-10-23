@@ -1,10 +1,13 @@
 package org.firstinspires.ftc.teamcode.subsystems;
 
+import org.firstinspires.ftc.teamcode.core.control.OpModeCleanup;
+
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
+import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.units.Units;
 
@@ -50,7 +53,7 @@ public class Shooter {
 
     private CachedMotor shooterMotorLeft;
     private CachedMotor shooterMotorRight;
-    private Servo servoHood;
+    private CachedServo servoHood;
     private Units.Alliance alliance;
     private Intake intakeSubsystem;
     private static final double K_P = 0.0002;
@@ -99,7 +102,7 @@ public class Shooter {
         shooterMotorRight.set_power(0);
         shooterMotorRight.raw().setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         shooterMotorRight.invalidate();
-        servoHood = hardwareMap.get(Servo.class, "servoHood");
+        servoHood = new CachedServo(hardwareMap.get(Servo.class, "servoHood"), HOOD_POSITION_EPSILON);
         fixedHoodAngle = DEFAULT_HOOD_ANGLE_DEG;
         targetHoodAngle = fixedHoodAngle;
         hoodMapped = false;
@@ -124,6 +127,14 @@ public class Shooter {
         preparingShot = false;
         shootingActive = false;
         state = State.FLOAT;
+    }
+
+    public double calculate_flywheel_velocity(double distanceToNearestHive) {
+        return calculate_rpm(distanceToNearestHive, DISTANCE_A, DISTANCE_B, DISTANCE_C);
+    }
+
+    public double calculate_hood_angle(double distanceInches) {
+        return calculate_hood_angle(distanceInches, HOOD_DISTANCE_A, HOOD_DISTANCE_B, HOOD_DISTANCE_C);
     }
 
     /** A matched RPM/hood pair fitted from minimum-RPM successful shots at each distance. */
@@ -198,13 +209,15 @@ public class Shooter {
         mappedHoodAngle = targetHoodAngle;
         hoodMapped = true;
         double position = hood_position_validated(targetHoodAngle);
-        hoodTargetValid = HOOD_CONFIG_VALID && SensorReadings.is_valid(position);
+        hoodTargetValid = HOOD_CONFIG_VALID;
         if (hoodTargetValid && (!hoodCommanded
                 || Math.abs(position - commandedHoodPosition) >= HOOD_POSITION_EPSILON)) {
-            servoHood.setPosition(Math.max(0, Math.min(1, position)));
-            commandedHoodPosition = position;
-            hoodCommanded = true;
-            lastHoodCommandNanos = System.nanoTime();
+            hoodTargetValid = servoHood.set_position(position);
+            if (hoodTargetValid) {
+                commandedHoodPosition = position;
+                hoodCommanded = true;
+                lastHoodCommandNanos = System.nanoTime();
+            }
         }
     }
 
@@ -318,6 +331,7 @@ public class Shooter {
     public double get_target_rpm() { return targetRpm; }
     public double get_fixed_rpm() { return fixedRpm; }
     public double get_target_distance() { return targetDistance; }
+    public boolean distance_valid() { return targetHive.valid; }
     public HiveDistance get_target_hive() { return targetHive; }
     public boolean target_available() { return targetAvailable; }
     public double get_target_hood_angle() { return targetHoodAngle; }
@@ -391,9 +405,14 @@ public class Shooter {
             }
         }
         if (targetAvailable) update_hood();
-        SensorReadings.Sample velocity = shooterMotorLeft.sample_velocity();
-        velocityValid = velocity.is_valid();
-        if (velocityValid) currentRpm = velocity.get_value() * (60.0 / ENCODER_TICKS_PER_REV);
+        SensorReadings.Sample leftVelocity = shooterMotorLeft.sample_velocity();
+        SensorReadings.Sample rightVelocity = shooterMotorRight.sample_velocity();
+        velocityValid = leftVelocity.is_valid() || rightVelocity.is_valid();
+        double velocityTicksPerSec = leftVelocity.is_valid() ? leftVelocity.get_value() : rightVelocity.get_value();
+        if (leftVelocity.is_valid() && rightVelocity.is_valid()) {
+            velocityTicksPerSec = leftVelocity.get_value() * 0.5 + rightVelocity.get_value() * 0.5;
+        }
+        if (velocityValid) currentRpm = velocityTicksPerSec * (60.0 / ENCODER_TICKS_PER_REV);
         if (shootingRequested) {
             state = State.SHOOT;
         } else {
@@ -401,8 +420,14 @@ public class Shooter {
                     ? State.PREPARE : State.FLOAT;
         }
         // Keep regulating the fitted RPM while feeding, instead of forcing full power.
-        motorControlValid = regulate_flywheel(state == State.FLOAT ? FLOAT_RPM : targetRpm,
-                velocity.get_value(), velocityValid && (state == State.FLOAT || targetAvailable));
+        double requestedRpm = state == State.FLOAT ? FLOAT_RPM : targetRpm;
+        boolean targetValid = state == State.FLOAT || targetAvailable;
+        if (!velocityValid) {
+            // Neither encoder is usable this tick; retain motor commands and controller history.
+            motorControlValid = false;
+        } else {
+            motorControlValid = regulate_flywheel(requestedRpm, velocityTicksPerSec, targetValid);
+        }
         if (shootingRequested && !shootingActive && ready_to_feed()) shootingActive = true;
         intakeSubsystem.update_feed(shootingActive, loaded);
     }
@@ -413,9 +438,17 @@ public class Shooter {
         state = State.FLOAT;
         reset_controller();
         motorControlValid = false;
-        if (shooterMotorLeft != null) shooterMotorLeft.set_power(0);
-        if (shooterMotorRight != null) shooterMotorRight.set_power(0);
-        if (intakeSubsystem != null) intakeSubsystem.stop();
+        OpModeCleanup.run(null,
+                () -> { if (shooterMotorLeft != null) shooterMotorLeft.set_power(0); },
+                () -> { if (shooterMotorRight != null) shooterMotorRight.set_power(0); },
+                () -> { if (intakeSubsystem != null) intakeSubsystem.stop(); });
+    }
+
+    /** Original competition PIDF, kept separate from the tuner's hub velocity controller. */
+    public void set_flywheel_velocity(double targetVelocity, double currentVelocityTicksPerSec) {
+        motorControlValid = regulate_flywheel(targetVelocity, currentVelocityTicksPerSec,
+                SensorReadings.are_valid(targetVelocity, currentVelocityTicksPerSec)
+                        && targetVelocity >= 0 && targetVelocity <= MAX_RPM);
     }
 
     private boolean regulate_flywheel(double targetVelocity, double currentVelocityTicksPerSec, boolean valid) {
@@ -423,6 +456,10 @@ public class Shooter {
             reset_controller();
             if (!shootingActive) set_flywheel_power(0);
             return false;
+        }
+        if (targetVelocity == 0) {
+            reset_controller();
+            return set_flywheel_power(0);
         }
         double currentTime = System.nanoTime() / 1e9;
         double targetTicksPerSec = targetVelocity / 60.0 * ENCODER_TICKS_PER_REV;
@@ -453,7 +490,7 @@ public class Shooter {
         return accepted;
     }
 
-    /** Both motors share the existing controller and the left shooter's encoder feedback. */
+    /** Both motors share the existing controller and the combined valid encoder feedback. */
     private boolean set_flywheel_power(double output) {
         boolean accepted = shootingActive ? shooterMotorLeft.set_power_if_valid(output) : shooterMotorLeft.set_power(output);
         accepted &= shootingActive ? shooterMotorRight.set_power_if_valid(output) : shooterMotorRight.set_power(output);

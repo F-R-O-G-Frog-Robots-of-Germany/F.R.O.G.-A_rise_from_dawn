@@ -83,21 +83,21 @@ public class FarMidGardenPark extends AbstractAuto {
         queue_intake_path(tangent_path(START, FAR_FLOWER_PICK_UP_CONTROL_1,
                 FAR_FLOWER_PICK_UP_CONTROL_2, FAR_FLOWER_PICK_UP_CONTROL_3,
                 FAR_FLOWER_PICK_UP), FAR_FLOWER_LOWER_AFTER_SECONDS);
-        queue_shoot_path(shoot_in_upper_hive(FAR_FLOWER_PICK_UP,
+        queue_shoot_path(shoot_in_hive(FAR_FLOWER_PICK_UP,
                 SHOOT_FROM_FAR_FLOWER_CONTROL_1, SHOOT_FROM_FAR_FLOWER_CONTROL_2,
                 SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_intake_path(tangent_path(SHOOT_IN_UPPER_HIVE, MID_FLOWER_PICK_UP_CONTROL_1,
                 MID_FLOWER_PICK_UP_CONTROL_2, MID_FLOWER_PICK_UP_CONTROL_3,
                 MID_FLOWER_PICK_UP), MID_FLOWER_LOWER_AFTER_SECONDS);
-        queue_shoot_path(shoot_in_upper_hive(MID_FLOWER_PICK_UP,
+        queue_shoot_path(shoot_in_hive(MID_FLOWER_PICK_UP,
                 SHOOT_FROM_MID_FLOWER_CONTROL_1, SHOOT_FROM_MID_FLOWER_CONTROL_2,
                 SHOOT_FROM_MID_FLOWER_CONTROL_3, SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_intake_path(tangent_path(SHOOT_IN_UPPER_HIVE, GARDEN_PICK_UP_CONTROL_1,
                 GARDEN_PICK_UP_CONTROL_2, GARDEN_PICK_UP_CONTROL_3, GARDEN_PICK_UP));
         // A third UPPER load adds redundancy after the first two deliveries.
-        queue_shoot_path(shoot_in_upper_hive(GARDEN_PICK_UP,
+        queue_shoot_path(shoot_in_hive(GARDEN_PICK_UP,
                 SHOOT_FROM_GARDEN_CONTROL_1, SHOOT_FROM_GARDEN_CONTROL_2,
                 SHOOT_FROM_GARDEN_CONTROL_3, SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
