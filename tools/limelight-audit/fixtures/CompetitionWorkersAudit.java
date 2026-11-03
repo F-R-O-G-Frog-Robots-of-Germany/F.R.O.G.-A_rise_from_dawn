@@ -45,6 +45,8 @@ public final class CompetitionWorkersAudit {
         require(!workers.ready() && !workers.owns_drive()
                 && !workers.request_collection(START, parameters(), 1)
                 && !workers.request_relocalization(), "disabled assistance cannot claim drive");
+        outcome(workers.collection_result(), ButineRunner.Outcome.REFUSED,
+                ButineRunner.Reason.PLANNER_UNAVAILABLE, "disabled collection publishes its refusal");
         workers.request_stop();
         require(workers.stop(), "disabled shutdown is safe");
     }
@@ -92,16 +94,34 @@ public final class CompetitionWorkersAudit {
             s.drive.busy = true;
             require(!s.workers.request_collection(START, parameters(), 1) && s.drive.stops == 0,
                     "static path cannot overlap collection and rejection leaves it alone");
+            outcome(s.workers.collection_result(), ButineRunner.Outcome.REFUSED,
+                    ButineRunner.Reason.DRIVE_BUSY, "authored path refusal is typed separately from planner failure");
             s.drive.busy = false;
             require(s.workers.request_collection(START, parameters(), 1) && s.workers.owns_drive(),
                     "explicit collection owns drive while planning");
+            long firstAttempt = s.workers.collection_attempt_id();
+            require(s.workers.collection_result(firstAttempt) == null,
+                    "accepted planning cannot report success before an arrival");
+            require(!s.workers.request_collection(START, parameters(), 1), "busy second collection is refused");
+            ButineRunner.Result busyRefusal = s.workers.collection_result();
+            outcome(busyRefusal, ButineRunner.Outcome.REFUSED, ButineRunner.Reason.DRIVE_BUSY,
+                    "second collection receives typed busy refusal");
+            require(busyRefusal.attemptId != firstAttempt && s.workers.collection_result(firstAttempt) == null
+                    && s.workers.owns_drive(), "new refusal does not erase or finish the original active request");
             require(!s.workers.request_relocalization(), "collection excludes correction");
             s.workers.cancel_drive();
+            outcome(s.workers.collection_result(firstAttempt), ButineRunner.Outcome.CANCELLED,
+                    ButineRunner.Reason.MANUAL_OVERRIDE, "manual override keeps its own terminal cause");
+            require(s.workers.collection_result() == busyRefusal,
+                    "latest-request refusal stays distinct from the cancelled active result");
             s.workers.update();
             require(!s.workers.owns_drive() && s.drive.dispatches == 0,
                     "manual override invalidates plan before any late dispatch");
             require(s.workers.request_collection(START, parameters(), 1), "collection can be requested again");
+            long invalidAttempt = s.workers.collection_attempt_id();
             s.drive.position = null; s.workers.update();
+            outcome(s.workers.collection_result(invalidAttempt), ButineRunner.Outcome.ABORTED,
+                    ButineRunner.Reason.INVALID_POSE, "lost odometry cannot become successful depot arrival");
             require(!s.workers.owns_drive() && s.drive.dispatches == 0,
                     "invalid localization cancels active collection without dispatch");
             Field latestPose = LimelightWorker.class.getDeclaredField("latestPose"); latestPose.setAccessible(true);
@@ -114,7 +134,10 @@ public final class CompetitionWorkersAudit {
             s.device.next_frame();
             service_until(s, () -> s.workers.ready(), "fresh localization restores detector readiness");
             require(s.workers.request_collection(START, parameters(), 1), "collection active before shutdown");
+            long stoppedAttempt = s.workers.collection_attempt_id();
             stopped = s.drive.stops; s.workers.request_stop(); s.workers.update();
+            outcome(s.workers.collection_result(stoppedAttempt), ButineRunner.Outcome.CANCELLED,
+                    ButineRunner.Reason.STOP_REQUESTED, "shutdown records STOP instead of ordinary failure parking");
             require(s.drive.stops == stopped && !s.workers.owns_drive() && s.drive.dispatches == 0,
                     "nonblocking shutdown invalidates requests without motor commands");
         } finally { s.close(); }
@@ -141,11 +164,14 @@ public final class CompetitionWorkersAudit {
             s.camera.maxFrameAgeMs = 40;
             s.start_ready();
             require(s.workers.request_collection(START, parameters(), 1), "collection starts with fresh frame");
+            long activeAttempt = s.workers.collection_attempt_id();
             s.device.readGate = new CountDownLatch(1);
             require(s.device.readEntered.await(2, TimeUnit.SECONDS), "camera read blocks for staleness");
             Thread.sleep(70); s.workers.update();
             require(!s.workers.ready() && !s.workers.owns_drive() && s.drive.dispatches == 0,
                     "expired held snapshot cancels collection before planner can dispatch");
+            outcome(s.workers.collection_result(activeAttempt), ButineRunner.Outcome.ABORTED,
+                    ButineRunner.Reason.VISION_UNAVAILABLE, "lost vision is distinct from fresh empty evidence");
             require(s.map.size() > 0 && !s.workers.request_collection(START, parameters(), 1),
                     "retained historical tracks cannot bypass fresh-frame request gate");
         } finally { s.close(); }
@@ -175,7 +201,10 @@ public final class CompetitionWorkersAudit {
             s.start_ready();
             s.drive.failFollow = true;
             require(s.workers.request_collection(START, parameters(), 1), "faulting collection starts asynchronously");
+            long activeAttempt = s.workers.collection_attempt_id();
             service_until(s, () -> !s.workers.owns_drive(), "runner exception is contained by competition service");
+            outcome(s.workers.collection_result(activeAttempt), ButineRunner.Outcome.ABORTED,
+                    ButineRunner.Reason.SERVICE_FAILURE, "drive dispatch exception preserves a typed service fault");
             require(s.drive.dispatches == 1 && !s.workers.ready()
                     && s.workers.detail().contains("failed"), "faulted assistance releases drive and reports failure");
             int stops = s.drive.stops;
@@ -239,7 +268,10 @@ public final class CompetitionWorkersAudit {
         try {
             s.start_ready();
             require(s.workers.request_collection(START, parameters(), 1), "collection active before origin reset");
+            long activeAttempt = s.workers.collection_attempt_id();
             s.drive.position = new VisionPose(30, 20, 0); s.workers.pose_changed();
+            outcome(s.workers.collection_result(activeAttempt), ButineRunner.Outcome.CANCELLED,
+                    ButineRunner.Reason.POSE_RESET, "explicit pose reset cannot reuse an old collection success");
             require(!s.workers.owns_drive() && !s.workers.ready() && s.map.size() == 0,
                     "explicit origin reset cancels collection and clears old-origin target evidence");
             require(!s.workers.request_collection(START, parameters(), 1), "cached pre-reset frame cannot start collection");
@@ -373,5 +405,10 @@ public final class CompetitionWorkersAudit {
     }
     private static void require(boolean value, String message) {
         checks++; if (!value) throw new AssertionError(message);
+    }
+
+    private static void outcome(ButineRunner.Result result, ButineRunner.Outcome outcome,
+                                ButineRunner.Reason reason, String message) {
+        require(result != null && result.outcome == outcome && result.reason == reason, message);
     }
 }

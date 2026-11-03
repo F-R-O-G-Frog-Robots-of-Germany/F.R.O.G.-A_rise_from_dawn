@@ -3,6 +3,8 @@ package org.firstinspires.ftc.teamcode.limelight;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.function.DoubleSupplier;
+import java.util.concurrent.atomic.AtomicLong;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 
 /** Solve and drive one collection run. The caller updates localization and owns intake/scoring. */
@@ -26,6 +28,50 @@ public final class ButineRunner {
     }
 
     public enum State { IDLE, PLANNING, DRIVING, COMPLETE, ABORTED }
+
+    public enum Outcome { COMPLETE_AT_DEPOT, NO_TARGETS, NO_FEASIBLE_RUN, REFUSED, ABORTED, TIMED_OUT, CANCELLED }
+    public enum Reason {
+        NONE, DRIVE_BUSY, VISION_UNAVAILABLE, PLANNER_UNAVAILABLE, INVALID_INPUT, INVALID_POSE,
+        BLOCKED_ROUTE, RETURN_BLOCKED, PARK_UNREACHABLE, NO_TARGETS, NO_FEASIBLE_RUN, PLAN_CHANGED, PLANNER_ERROR, REQUEST_SUPERSEDED,
+        MATCH_ALLOWANCE_EXPIRED, FOLLOWER_TIMEOUT, NEVER_BUSY, PICKUP_FAILED, UNSAFE_PROGRESS,
+        MANUAL_OVERRIDE, TERMINAL_PARK_PREEMPTION, AUTONOMOUS_DEADLINE, ACTION_TIMEOUT,
+        POSE_RESET, STOP_REQUESTED, SERVICE_FAILURE
+    }
+
+    /** Terminal evidence for one request. Geometric contacts are not a retained-piece count. */
+    public static final class Result {
+        public final long attemptId;
+        public final Outcome outcome;
+        public final Reason reason;
+        public final VisionPose depot, finalPose;
+        public final int contacts;
+        public final boolean endedByFullSensor;
+        public final String detail;
+
+        private Result(long attemptId, Outcome outcome, Reason reason, VisionPose depot,
+                       VisionPose finalPose, int contacts, boolean endedByFullSensor, String detail) {
+            this.attemptId = attemptId; this.outcome = outcome; this.reason = reason;
+            this.depot = depot; this.finalPose = finalPose;
+            this.contacts = contacts; this.endedByFullSensor = endedByFullSensor;
+            this.detail = detail == null ? "" : detail;
+        }
+        public boolean success() { return outcome == Outcome.COMPLETE_AT_DEPOT; }
+    }
+
+    private static final AtomicLong NEXT_ATTEMPT = new AtomicLong();
+
+    /** A facade may refuse before a runner exists; these IDs share the runner's request namespace. */
+    public static Result unstarted_result(VisionPose depot, VisionPose pose, Outcome outcome,
+                                          Reason reason, String detail) {
+        if (outcome == null || outcome == Outcome.COMPLETE_AT_DEPOT || reason == null)
+            throw new IllegalArgumentException("An unstarted request cannot report depot success");
+        return new Result(NEXT_ATTEMPT.incrementAndGet(), outcome, reason, finite_pose(depot),
+                finite_pose(pose), 0, false, detail);
+    }
+
+    private static VisionPose finite_pose(VisionPose pose) {
+        return pose != null && pose.is_finite() ? pose : null;
+    }
 
     public static final class Leg {
         public enum Kind { TRANSIT, PICKUP, DEPOT }
@@ -112,6 +158,14 @@ public final class ButineRunner {
     private boolean aligningCollection;
     private int continuousPathOffset;
     private boolean sensorReturnLatched;
+    private DoubleSupplier autoTimer;
+    private long attemptId, lastAttemptId;
+    private Result terminalResult, refusedResult;
+    private boolean solveHadTargets;
+    private Outcome solveFailureOutcome = Outcome.NO_FEASIBLE_RUN;
+    private Reason solveFailureReason = Reason.NO_FEASIBLE_RUN;
+    private Outcome recoveryOutcome = Outcome.NO_FEASIBLE_RUN;
+    private Reason recoveryReason = Reason.PICKUP_FAILED;
     private final ArrayList<Integer> sweptIds = new ArrayList<>();
     private final ArrayList<VisionPose> sweptPositions = new ArrayList<>();
     private static final double PRECISE_DEPOT_RADIUS_IN = 0.5;
@@ -130,50 +184,135 @@ public final class ButineRunner {
         this.planner = planner;
     }
 
+    /** Reuse the SDK autonomous timer; sample it only when the control thread requests a solve. */
+    public void set_auto_timer(DoubleSupplier timer) {
+        autoTimer = timer;
+    }
+
+    public long last_attempt_id() { return lastAttemptId; }
+    public long active_attempt_id() { return is_busy() ? attemptId : 0; }
+    public Result result(long id) {
+        if (terminalResult != null && terminalResult.attemptId == id) return terminalResult;
+        return refusedResult != null && refusedResult.attemptId == id ? refusedResult : null;
+    }
+    public Result last_result() { return result(lastAttemptId); }
+
+    private VisionPose final_pose() {
+        try { return finite_pose(drive.pose()); }
+        catch (RuntimeException unavailable) { return null; }
+    }
+
+    private void record_result(Outcome outcome, Reason reason, String detail) {
+        if (attemptId == 0 || (terminalResult != null && terminalResult.attemptId == attemptId)) return;
+        terminalResult = new Result(attemptId, outcome, reason, finite_pose(depot), final_pose(),
+                pickupsThisRun, sensorReturnLatched, detail);
+    }
+
+    private boolean refuse(VisionPose requestedDepot, Reason reason, String detail) {
+        refusedResult = unstarted_result(requestedDepot, final_pose(), Outcome.REFUSED, reason, detail);
+        lastAttemptId = refusedResult.attemptId;
+        if (!is_busy()) lastReport = detail;
+        return false;
+    }
+
+    private void begin_attempt(VisionPose requestedDepot) {
+        attemptId = lastAttemptId = NEXT_ATTEMPT.incrementAndGet();
+        terminalResult = null;
+        depot = requestedDepot;
+        pickupsThisRun = 0;
+        sensorReturnLatched = false;
+        recoveryOutcome = Outcome.NO_FEASIBLE_RUN;
+        recoveryReason = Reason.PICKUP_FAILED;
+        solveFailureOutcome = Outcome.NO_FEASIBLE_RUN;
+        solveFailureReason = Reason.NO_FEASIBLE_RUN;
+    }
+
+    /** Stop accepted work with a caller-specified cause; cleanup cannot rewrite a terminal result. */
+    public void finish(Outcome outcome, Reason reason, String detail) {
+        if (outcome == null || outcome == Outcome.COMPLETE_AT_DEPOT || reason == null)
+            throw new IllegalArgumentException("Only the arrival gates can report depot success");
+        if (is_busy() || (attemptId != 0 && terminalResult == null && lastAttemptId == attemptId)) {
+            intakeEnabled = false;
+            record_result(outcome, reason, detail);
+            state = State.ABORTED;
+            lastReport = detail;
+            if (planner != null) planner.cancel_pending();
+        }
+        drive.stop();
+    }
+
+    /** Lifecycle invalidation records STOP without issuing motor commands before the owner's cleanup. */
+    public void request_stop() {
+        if (!is_busy()) return;
+        intakeEnabled = false;
+        record_result(Outcome.CANCELLED, Reason.STOP_REQUESTED, "collection stopped by OpMode shutdown");
+        state = State.ABORTED;
+        if (planner != null) planner.cancel_pending();
+    }
+
+    private boolean solve_failure(Outcome outcome, Reason reason, String detail) {
+        solveFailureOutcome = outcome; solveFailureReason = reason; lastReport = detail;
+        return false;
+    }
+
     /** A depot is already mirrored into the same real field frame as camera observations. */
     public boolean run_butine(VisionPose depot, Butine.Params parameters, double speedScale) {
-        if (is_busy() || drive.is_busy()) return false;
+        if (is_busy() || drive.is_busy()) return refuse(depot, Reason.DRIVE_BUSY, "collection drive is busy");
         if (planner != null && !planner.is_running()) {
-            lastReport = "planner is not running";
-            return false;
+            return refuse(depot, Reason.PLANNER_UNAVAILABLE, "planner is not running");
         }
         if (depot == null || !depot.is_finite() || parameters == null
                 || !Double.isFinite(speedScale) || speedScale <= 0 || speedScale > 1) {
-            throw new IllegalArgumentException("finite depot, parameters and speed scale in (0,1] are required");
+            refuse(depot, Reason.INVALID_INPUT, "finite depot, parameters and speed scale in (0,1] are required");
+            throw new IllegalArgumentException(lastReport);
         }
         VisionPose start = drive.pose();
         if (start == null || !start.is_finite()) {
+            refuse(depot, Reason.INVALID_POSE, "drive pose is invalid");
             drive.stop();
             throw new IllegalStateException("drive pose is invalid");
         }
-        this.depot = depot;
-        this.params = new Butine.Params(parameters);
-        this.field = this.params.field;
-        if (field == null) throw new IllegalArgumentException("field geometry is required");
-        if (!field.is_unrestricted()) this.params.capacity = this.params.capacity <= 0
-                ? Butine.POSSESSION_LIMIT : Math.min(this.params.capacity, Butine.POSSESSION_LIMIT);
-        if (!field.is_clear(start) || !field.is_clear(depot)) {
-            abort_run("start or depot is outside the permitted robot-center space");
-            return false;
+        begin_attempt(depot);
+        try {
+            this.params = new Butine.Params(parameters);
+            this.field = this.params.field;
+            if (field == null) throw new IllegalArgumentException("field geometry is required");
+            if (!field.is_unrestricted()) this.params.capacity = this.params.capacity <= 0
+                    ? Butine.POSSESSION_LIMIT : Math.min(this.params.capacity, Butine.POSSESSION_LIMIT);
+            if (!field.is_clear(start) || !field.is_clear(depot)) {
+                abort_run(Outcome.NO_FEASIBLE_RUN, Reason.BLOCKED_ROUTE,
+                        "start or depot is outside the permitted robot-center space");
+                return false;
+            }
+            this.speedScale = speedScale;
+            this.params.kinematics.cruiseSpeedInS *= speedScale;
+            replansThisRun = pickupsThisRun = 0;
+            continuousRoute = null; intakeEnabled = false; aligningCollection = false;
+            continuousPathOffset = 0;
+            sensorReturnLatched = false;
+            sweptIds.clear(); sweptPositions.clear();
+            recoveringHome = false;
+            runStartedNanos = System.nanoTime();
+            lastReport = "no fitting collection run";
+            if (!solve_from(start, false)) {
+                record_result(solveFailureOutcome, solveFailureReason, lastReport);
+                drive.stop();
+                state = State.IDLE;
+                return false;
+            }
+            if (planner == null) stats.runsStarted++;
+            state = planner == null ? State.DRIVING : State.PLANNING;
+            return true;
+        } catch (RuntimeException failure) {
+            intakeEnabled = false;
+            record_result(Outcome.ABORTED, failure instanceof IllegalArgumentException
+                    ? Reason.INVALID_INPUT : Reason.SERVICE_FAILURE, "collection request failed: " + failure);
+            state = State.ABORTED;
+            if (planner != null) planner.cancel_pending();
+            try { drive.stop(); }
+            catch (RuntimeException stopFailure) { failure.addSuppressed(stopFailure); }
+            throw failure;
         }
-        this.speedScale = speedScale;
-        this.params.kinematics.cruiseSpeedInS *= speedScale;
-        replansThisRun = pickupsThisRun = 0;
-        continuousRoute = null; intakeEnabled = false; aligningCollection = false;
-        continuousPathOffset = 0;
-        sensorReturnLatched = false;
-        sweptIds.clear(); sweptPositions.clear();
-        recoveringHome = false;
-        runStartedNanos = System.nanoTime();
-        lastReport = "no fitting collection run";
-        if (!solve_from(start, false)) {
-            drive.stop();
-            state = State.IDLE;
-            return false;
-        }
-        if (planner == null) stats.runsStarted++;
-        state = planner == null ? State.DRIVING : State.PLANNING;
-        return true;
     }
 
     public boolean run_butine(VisionPose depot) { return run_butine(depot, new Butine.Params(), 1.0); }
@@ -183,28 +322,44 @@ public final class ButineRunner {
 
     private boolean solve_from(VisionPose start, boolean replanning) {
         if (!field.is_clear(start) || !field.is_clear(depot)) {
-            lastReport = "cannot plan from a blocked start or depot";
-            return false;
+            return solve_failure(Outcome.ABORTED, Reason.BLOCKED_ROUTE, "cannot plan from a blocked start or depot");
         }
         Butine.Params local = new Butine.Params(params);
+        if (autoTimer != null) {
+            double elapsed = autoTimer.getAsDouble();
+            if (!Double.isFinite(elapsed) || elapsed < 0) {
+                return solve_failure(Outcome.ABORTED, Reason.INVALID_INPUT, "invalid autonomous timer");
+            }
+            local.elapsedAutoS = elapsed;
+        }
         if (replanning) {
             local.remainingS = Math.max(0, params.remainingS - (System.nanoTime() - runStartedNanos) / 1e9);
             if (local.capacity > 0) local.capacity = Math.max(1, local.capacity - pickupsThisRun);
         }
         ArrayList<Pollen> candidates = new ArrayList<>();
+        solveHadTargets = false;
         for (Pollen pollen : map.snapshot()) {
             boolean excluded = unreachableIds.contains(pollen.id);
             for (VisionPose failed : unreachablePositions) {
                 if (pollen.position.distance_to(failed) <= PICKUP_RADIUS_IN) { excluded = true; break; }
             }
-            if (!excluded) candidates.add(pollen);
+            if (!excluded) {
+                candidates.add(pollen);
+                if (pollen.confidence >= local.minConfidence) solveHadTargets = true;
+            }
+        }
+        solveFailureOutcome = solveHadTargets ? Outcome.NO_FEASIBLE_RUN : Outcome.NO_TARGETS;
+        solveFailureReason = solveHadTargets ? Reason.NO_FEASIBLE_RUN : Reason.NO_TARGETS;
+        if (local.remainingS <= 0) {
+            solveFailureOutcome = Outcome.TIMED_OUT;
+            solveFailureReason = Reason.MATCH_ALLOWANCE_EXPIRED;
         }
         if (planner != null) {
-            if (!planner.is_running()) return false;
+            if (!planner.is_running()) return solve_failure(Outcome.ABORTED, Reason.PLANNER_UNAVAILABLE, "planner is not running");
             state = State.ABORTED;
             drive.stop();
             planningRequest = planner.request_plan(candidates, start, depot, local, 0);
-            if (planningRequest == 0) return false;
+            if (planningRequest == 0) return solve_failure(Outcome.ABORTED, Reason.PLANNER_UNAVAILABLE, "planner declined request");
             planningReplan = replanning; planningParams = local;
             legs = Collections.emptyList(); legIndex = 0;
             dispatched = armed = waitingPickup = false;
@@ -222,8 +377,7 @@ public final class ButineRunner {
         stats.planned = 0;
         stats.predictedS = 0;
         if (lastPlan == null || lastPlan.field != field || local.field != field) {
-            lastReport = "planning result used different field geometry";
-            return false;
+            return solve_failure(Outcome.ABORTED, Reason.PLAN_CHANGED, "planning result used different field geometry");
         }
         if (lastPlan.fittingRuns <= 0 || lastPlan.runs[0].count <= 0) {
             lastReport = lastPlan.rejectionReason == null || lastPlan.rejectionReason.isEmpty()
@@ -236,19 +390,16 @@ public final class ButineRunner {
         try {
             continuousRoute = lastPlan.runs[0].route;
             if (continuousRoute != null && !drive.supports_continuous()) {
-                lastReport = "drive does not support continuous collection";
-                return false;
+                return solve_failure(Outcome.ABORTED, Reason.INVALID_INPUT, "drive does not support continuous collection");
             }
             if (continuousRoute != null && (start.distance_to(continuousRoute.waypoint(0)) > 0.25
                     || Math.abs(VisionPose.wrap_pi(start.heading - continuousRoute.waypoint(0).heading))
                     > PRECISE_DEPOT_HEADING_RAD)) {
-                lastReport = "robot moved while the continuous route was being planned";
-                return false;
+                return solve_failure(Outcome.ABORTED, Reason.PLAN_CHANGED, "robot moved while the continuous route was being planned");
             }
             legs = build_run_legs(lastPlan.runs[0], start, depot, local.kinematics, field);
         } catch (IllegalArgumentException unreachable) {
-            lastReport = "planning result has no safe route: " + unreachable.getMessage();
-            return false;
+            return solve_failure(Outcome.ABORTED, Reason.BLOCKED_ROUTE, "planning result has no safe route: " + unreachable.getMessage());
         }
         stats.planned = lastPlan.runs[0].count;
         stats.predictedS = 0;
@@ -256,8 +407,7 @@ public final class ButineRunner {
         if (!fits_remaining(stats.predictedS)) {
             legs = Collections.emptyList();
             stats.planned = 0; stats.predictedS = 0;
-            lastReport = "planned run no longer fits after live-start correction";
-            return false;
+            return solve_failure(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED, "planned run no longer fits after live-start correction");
         }
         legIndex = 0;
         dispatched = armed = waitingPickup = false;
@@ -270,49 +420,57 @@ public final class ButineRunner {
     /** Poll publication only; solver, map mutation and drive ownership never overlap. */
     private void update_planning() {
         VisionPose here = drive.pose();
-        if (!field.is_clear(here) || drive.is_busy()
-                || (System.nanoTime() - runStartedNanos) / 1e9 >= params.remainingS) {
-            planner.cancel_pending(); drive.stop(); state = State.ABORTED;
-            lastReport = "planning cancelled: motion, invalid/blocked pose or expired match time";
+        if ((System.nanoTime() - runStartedNanos) / 1e9 >= params.remainingS) {
+            abort_run(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED, "planning exceeded the collection allowance");
+            return;
+        }
+        if (!field.is_clear(here) || drive.is_busy()) {
+            abort_run(Outcome.ABORTED, here == null || !here.is_finite() ? Reason.INVALID_POSE : Reason.PLAN_CHANGED,
+                    "planning cancelled: motion or invalid/blocked pose");
             return;
         }
         ButineWorker.Result result = planner.latest_result();
         if (result == null || result.requestId != planningRequest) {
             if (!planner.is_running() || planner.stats().latestRequestId != planningRequest) {
-                drive.stop(); state = State.ABORTED;
-                lastReport = "planner stopped or request superseded";
+                abort_run(planner.is_running() ? Outcome.CANCELLED : Outcome.ABORTED,
+                        planner.is_running() ? Reason.REQUEST_SUPERSEDED : Reason.PLANNER_UNAVAILABLE,
+                        "planner stopped or request superseded");
             }
             return;
         }
         stats.solves++;
         if (result.plan != null) stats.solveUsTotal += result.plan.solveUs;
         if (result.error != null) {
-            state = State.ABORTED; drive.stop();
-            lastReport = "planner failed: " + result.error;
+            abort_run(Outcome.ABORTED, Reason.PLANNER_ERROR, "planner failed: " + result.error);
             return;
         }
         lastPlan = result.plan;
         if (lastPlan != null && lastPlan.field != field) {
-            abort_run("planning result used different field geometry");
+            abort_run(Outcome.ABORTED, Reason.PLAN_CHANGED, "planning result used different field geometry");
             return;
         }
         if (lastPlan == null || lastPlan.fittingRuns == 0 || lastPlan.runs[0].count == 0) {
-            finish_empty_plan(here, lastPlan != null && lastPlan.rejectionReason != null
+            finish_empty_plan(here, solveFailureOutcome, solveFailureReason,
+                    lastPlan != null && lastPlan.rejectionReason != null
                     && !lastPlan.rejectionReason.isEmpty()
                     ? lastPlan.rejectionReason : "no fitting collection run");
             return;
         }
         if (!result.executable(here, 0, 1.0, Math.toRadians(8)) || !targets_still_present(lastPlan.runs[0])) {
-            finish_empty_plan(here, "planning result rejected: moved start, changed targets or elapsed deadline");
+            boolean expired = lastPlan.runs[0].timeS + Math.max(0, params.scoreOverheadS) > result.remaining_s();
+            finish_empty_plan(here, expired ? Outcome.TIMED_OUT : Outcome.ABORTED,
+                    expired ? Reason.MATCH_ALLOWANCE_EXPIRED : Reason.PLAN_CHANGED,
+                    "planning result rejected: moved start, changed targets or elapsed deadline");
             return;
         }
         if (!install_plan(here, planningParams)) {
-            finish_empty_plan(here, lastReport);
+            finish_empty_plan(here, solveFailureOutcome, solveFailureReason, lastReport);
             return;
         }
         double remaining = params.remainingS - (System.nanoTime() - runStartedNanos) / 1e9;
         if (stats.predictedS + Math.max(0, params.scoreOverheadS) > remaining) {
-            finish_empty_plan(here, "planned run no longer fits after start-pose correction");
+            finish_empty_plan(here, Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED,
+                    "planned run no longer fits after start-pose correction");
             return;
         }
         if (!planningReplan) stats.runsStarted++;
@@ -336,15 +494,17 @@ public final class ButineRunner {
         return true;
     }
 
-    private void finish_empty_plan(VisionPose here, String reason) {
+    private void finish_empty_plan(VisionPose here, Outcome outcome, Reason cause, String reason) {
         if (planner != null) planner.cancel_pending();
         stats.planned = 0; stats.predictedS = 0;
         if (planningReplan) {
+            recoveryOutcome = outcome; recoveryReason = cause;
             install_return_route(here, reason);
         } else {
             legs = Collections.emptyList();
             drive.stop(); state = State.IDLE;
             lastReport = reason;
+            record_result(outcome, cause, reason);
         }
     }
 
@@ -453,7 +613,8 @@ public final class ButineRunner {
             drive.stop();
             VisionPose here = drive.pose();
             if (!field.is_clear(here)) {
-                abort_run("full-load sensor: invalid or blocked live return origin");
+                abort_run(Outcome.ABORTED, here == null || !here.is_finite() ? Reason.INVALID_POSE : Reason.RETURN_BLOCKED,
+                        "full-load sensor: invalid or blocked live return origin");
                 return true;
             }
             if (!drive.supports_continuous()) {
@@ -462,13 +623,15 @@ public final class ButineRunner {
             } else {
                 ButineIntake.Route home = ButineIntake.return_route(here, depot, params);
                 if (home == null || !fits_remaining(home.timeS)) {
-                    abort_run("full-load sensor: no clear return fits the remaining time");
+                    abort_run(home == null ? Outcome.ABORTED : Outcome.TIMED_OUT,
+                            home == null ? Reason.BLOCKED_ROUTE : Reason.MATCH_ALLOWANCE_EXPIRED,
+                            "full-load sensor: no clear return fits the remaining time");
                     return true;
                 }
                 Butine.Run returning = new Butine.Run(new int[0], new VisionPose[0], home.timeS, false, home);
                 List<Leg> returnLegs = build_run_legs(returning, here, depot, params.kinematics, field);
                 if (returnLegs.isEmpty()) {
-                    abort_run("full-load sensor: empty return route");
+                    abort_run(Outcome.ABORTED, Reason.RETURN_BLOCKED, "full-load sensor: empty return route");
                     return true;
                 }
                 continuousRoute = home;
@@ -488,6 +651,7 @@ public final class ButineRunner {
             return true;
         } catch (RuntimeException failure) {
             intakeEnabled = false;
+            record_result(Outcome.ABORTED, Reason.SERVICE_FAILURE, "full-load return failed: " + failure);
             state = State.ABORTED;
             lastReport = "full-load return failed: " + failure;
             try { drive.stop(); }
@@ -520,13 +684,14 @@ public final class ButineRunner {
         try {
             append_route(returning, here, depot, -1, Leg.Kind.DEPOT, params.kinematics, field);
         } catch (IllegalArgumentException unreachable) {
-            abort_run(reason + "; no safe return: " + unreachable.getMessage());
+            abort_run(Outcome.ABORTED, Reason.RETURN_BLOCKED, reason + "; no safe return: " + unreachable.getMessage());
             return;
         }
         double predicted = 0;
         for (Leg leg : returning) predicted += leg.predictedS;
         if (!fits_remaining(predicted)) {
-            abort_run(reason + "; safe return no longer fits remaining time");
+            abort_run(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED,
+                    reason + "; safe return no longer fits remaining time");
             return;
         }
         legs = Collections.unmodifiableList(returning);
@@ -538,11 +703,16 @@ public final class ButineRunner {
     }
 
     private void abort_run(String reason) {
+        abort_run(Outcome.ABORTED, Reason.UNSAFE_PROGRESS, reason);
+    }
+
+    private void abort_run(Outcome outcome, Reason cause, String reason) {
         intakeEnabled = false;
         if (planner != null) planner.cancel_pending();
-        drive.stop();
+        record_result(outcome, cause, reason);
         state = State.ABORTED;
         lastReport = reason;
+        drive.stop();
     }
 
     /** Call after follower.update(). Busy arming, timeouts and recovery never block the loop. */
@@ -552,6 +722,7 @@ public final class ButineRunner {
             if (state == State.PLANNING) update_planning(); else update_run();
         } catch (RuntimeException exception) {
             if (planner != null) planner.cancel_pending();
+            record_result(Outcome.ABORTED, Reason.SERVICE_FAILURE, "runner stopped after failure: " + exception);
             state = State.ABORTED;
             lastReport = "runner stopped after failure: " + exception;
             try { drive.stop(); }
@@ -564,15 +735,14 @@ public final class ButineRunner {
         if (continuousRoute != null) { update_continuous(); return; }
         VisionPose current = drive.pose();
         if (!field.is_clear(current)) {
-            abort_run("drive pose became invalid or entered forbidden robot-center space");
+            abort_run(Outcome.ABORTED, current == null || !current.is_finite() ? Reason.INVALID_POSE : Reason.BLOCKED_ROUTE,
+                    "drive pose became invalid or entered forbidden robot-center space");
             return;
         }
         Leg leg = legs.get(legIndex);
         long now = System.nanoTime();
         if ((now - runStartedNanos) / 1e9 >= params.remainingS) {
-            drive.stop();
-            state = State.ABORTED;
-            lastReport = "run exceeded available autonomous time";
+            abort_run(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED, "run exceeded available autonomous time");
             return;
         }
         if (waitingPickup) {
@@ -590,7 +760,8 @@ public final class ButineRunner {
                 return;
             }
             if (!fits_remaining(remaining_route_time(current))) {
-                abort_run("remaining routed run no longer fits available autonomous time");
+                abort_run(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED,
+                        "remaining routed run no longer fits available autonomous time");
                 return;
             }
             legStartedNanos = now;
@@ -618,7 +789,7 @@ public final class ButineRunner {
                     armed = true;
                 } else {
                     stats.legsNeverBusy++;
-                    fail_leg(leg, "follower never became busy", now);
+                    fail_leg(leg, Outcome.NO_FEASIBLE_RUN, Reason.NEVER_BUSY, "follower never became busy", now);
                     return;
                 }
             } else return;
@@ -626,7 +797,7 @@ public final class ButineRunner {
         double deadline = ARM_TIMEOUT_S + Math.max(2.0, 2.5 * leg.predictedS + 1.5);
         if (elapsed >= deadline) {
             stats.legsTimedOut++;
-            fail_leg(leg, "leg timed out", now);
+            fail_leg(leg, Outcome.TIMED_OUT, Reason.FOLLOWER_TIMEOUT, "leg timed out", now);
         } else if (!busy) {
             if (reached_target(leg)) complete_leg(leg, now);
             else if (leg.returning && drive.pose().distance_to(leg.target) <= DEPOT_RADIUS_IN) return;
@@ -641,11 +812,12 @@ public final class ButineRunner {
         VisionPose here = drive.pose();
         long now = System.nanoTime();
         if (!field.is_clear(here)) {
-            abort_run("continuous drive pose is invalid or blocked");
+            abort_run(Outcome.ABORTED, here == null || !here.is_finite() ? Reason.INVALID_POSE : Reason.BLOCKED_ROUTE,
+                    "continuous drive pose is invalid or blocked");
             return;
         }
         if ((now - runStartedNanos) / 1e9 >= params.remainingS) {
-            abort_run("continuous collection exceeded available time");
+            abort_run(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED, "continuous collection exceeded available time");
             return;
         }
         if (!dispatched) {
@@ -653,7 +825,10 @@ public final class ButineRunner {
             if (aligningCollection) remainingPrediction -= Math.min(legs.get(0).predictedS,
                     Math.max(0, (now - legStartedNanos) / 1e9));
             if (!field.segment_clear(here, legs.get(0).target) || !fits_remaining(remainingPrediction)) {
-                abort_run("continuous route no longer fits the live start or deadline");
+                boolean blocked = !field.segment_clear(here, legs.get(0).target);
+                abort_run(blocked ? Outcome.ABORTED : Outcome.TIMED_OUT,
+                        blocked ? Reason.BLOCKED_ROUTE : Reason.MATCH_ALLOWANCE_EXPIRED,
+                        "continuous route no longer fits the live start or deadline");
                 return;
             }
             if (aligningCollection) {
@@ -663,12 +838,12 @@ public final class ButineRunner {
                         && Double.isFinite(drive.speed_in_s()) && drive.speed_in_s() <= PRECISE_DEPOT_SPEED_IN_S) {
                     aligningCollection = false; continuousPathOffset = 1;
                     if (!fits_remaining(Math.max(0, stats.predictedS - legs.get(0).predictedS))) {
-                        abort_run("aligned route no longer fits the remaining time");
+                        abort_run(Outcome.TIMED_OUT, Reason.MATCH_ALLOWANCE_EXPIRED, "aligned route no longer fits the remaining time");
                         return;
                     }
                 } else {
                     if ((now - legStartedNanos) / 1e9 > Math.max(2, 2.5 * legs.get(0).predictedS + 1.5))
-                        abort_run("intake alignment at depot timed out");
+                        abort_run(Outcome.TIMED_OUT, Reason.FOLLOWER_TIMEOUT, "intake alignment at depot timed out");
                     return;
                 }
             } else if (!legs.get(0).intakeActive && legs.size() > 1
@@ -714,21 +889,23 @@ public final class ButineRunner {
         previousSweepPose = here; previousPathIndex = index; legIndex = index;
         if (!armed && !busy && elapsed >= ARM_TIMEOUT_S && !at_precise_depot()) {
             stats.legsNeverBusy++;
-            abort_run("continuous follower never became busy");
+            abort_run(Outcome.ABORTED, Reason.NEVER_BUSY, "continuous follower never became busy");
         } else if (!busy && at_precise_depot()) {
             intakeEnabled = false;
             stats.lastLegPredictedS = stats.predictedS;
             stats.lastLegActualS = elapsed;
             if (pickupsThisRun == 0 && !sensorReturnLatched) {
-                abort_run("returned without confirmed intake contacts");
+                abort_run(Outcome.NO_FEASIBLE_RUN, Reason.PICKUP_FAILED,
+                        "returned without confirmed intake contacts");
             } else {
                 stats.runsCompleted++; state = State.COMPLETE;
                 lastReport = sensorReturnLatched ? "full-load return complete: depot settled"
                         : "continuous run complete: " + pickupsThisRun + " contacts, depot settled";
+                record_result(Outcome.COMPLETE_AT_DEPOT, Reason.NONE, lastReport);
             }
         } else if (elapsed >= ARM_TIMEOUT_S + Math.max(3, 2.5 * stats.predictedS + 1.5)) {
             stats.legsTimedOut++;
-            abort_run("continuous run or precise depot settling timed out");
+            abort_run(Outcome.TIMED_OUT, Reason.FOLLOWER_TIMEOUT, "continuous run or precise depot settling timed out");
         }
     }
 
@@ -817,6 +994,10 @@ public final class ButineRunner {
         if (leg.returning) {
             stats.runsCompleted++;
             state = State.COMPLETE;
+            if (reached && reached_target(leg) && (!recoveringHome || sensorReturnLatched)
+                    && (pickupsThisRun > 0 || sensorReturnLatched))
+                record_result(Outcome.COMPLETE_AT_DEPOT, Reason.NONE, lastReport);
+            else record_result(recoveryOutcome, recoveryReason, lastReport);
         } else {
             legIndex++;
             dispatched = armed = waitingPickup = false;
@@ -840,14 +1021,21 @@ public final class ButineRunner {
     }
 
     private void fail_leg(Leg leg, String reason, long now) {
+        fail_leg(leg, Outcome.NO_FEASIBLE_RUN, Reason.PICKUP_FAILED, reason, now);
+    }
+
+    private void fail_leg(Leg leg, Outcome outcome, Reason cause, String reason, long now) {
         drive.stop();
         stats.lastLegPredictedS = leg.predictedS;
         stats.lastLegActualS = (now - legStartedNanos) / 1e9;
         lastReport = reason;
         if (leg.returning || recoveringHome) {
+            record_result(outcome == Outcome.TIMED_OUT ? outcome : Outcome.ABORTED,
+                    leg.returning && cause == Reason.PICKUP_FAILED ? Reason.RETURN_BLOCKED : cause, reason);
             state = State.ABORTED;
             return;
         }
+        recoveryOutcome = outcome; recoveryReason = cause;
         // Failed pickups remain visible in the map. Exclude their locations separately,
         // including new IDs created when the camera observes that unreachable spot again.
         if (leg.kind == Leg.Kind.PICKUP) {
@@ -868,8 +1056,11 @@ public final class ButineRunner {
 
     private void recover_dispatch(Leg leg, VisionPose here) {
         drive.stop();
+        recoveryOutcome = Outcome.NO_FEASIBLE_RUN;
+        recoveryReason = Reason.BLOCKED_ROUTE;
         if (leg.field != field) {
-            abort_run("leg field geometry no longer matches the active plan");
+            abort_run(Outcome.ABORTED, Reason.PLAN_CHANGED,
+                    "leg field geometry no longer matches the active plan");
             return;
         }
         if (replansThisRun >= MAX_REPLANS || recoveringHome) {
@@ -905,7 +1096,10 @@ public final class ButineRunner {
     public void stop() {
         intakeEnabled = false;
         if (planner != null) planner.cancel_pending();
-        if (is_busy()) state = State.ABORTED;
+        if (is_busy()) {
+            record_result(Outcome.CANCELLED, Reason.MANUAL_OVERRIDE, "collection cancelled by caller");
+            state = State.ABORTED;
+        }
         drive.stop();
     }
 

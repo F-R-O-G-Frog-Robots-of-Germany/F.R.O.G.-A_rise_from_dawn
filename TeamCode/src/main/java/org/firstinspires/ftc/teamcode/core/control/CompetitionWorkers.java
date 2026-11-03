@@ -12,6 +12,8 @@ import org.firstinspires.ftc.teamcode.limelight.LimelightWorker;
 import org.firstinspires.ftc.teamcode.limelight.PedroButineDrive;
 import org.firstinspires.ftc.teamcode.limelight.PollenMap;
 import org.firstinspires.ftc.teamcode.limelight.VisionPose;
+import java.util.LinkedHashMap;
+import java.util.function.DoubleSupplier;
 
 /**
  * Per-OpMode camera/planner ownership. Call lifecycle, requests and updates only on the
@@ -34,6 +36,8 @@ public final class CompetitionWorkers {
     private boolean launching;
     private long invalidatedPoseNanos = Long.MIN_VALUE;
     private String report = "not started";
+    private long collectionAttemptId;
+    private final LinkedHashMap<Long, ButineRunner.Result> collectionResults = new LinkedHashMap<>();
 
     /** Dynamic planning requires vision; enabling planning also enables its camera owner. */
     public CompetitionWorkers(HardwareMap hardwareMap, Follower follower,
@@ -62,6 +66,65 @@ public final class CompetitionWorkers {
     public PollenMap map() { return map; }
     public LimelightWorker vision() { return vision; }
     public ButineWorker planner() { return planner; }
+
+    /** Every request gets an identity, including refusals while another request is active. */
+    public long collection_attempt_id() { return collectionAttemptId; }
+
+    /** Null means that this request has not produced terminal evidence yet. */
+    public ButineRunner.Result collection_result(long attemptId) {
+        ButineRunner.Result result = collection == null ? null : collection.result(attemptId);
+        if (result != null) remember_result(result);
+        return result != null ? result : collectionResults.get(attemptId);
+    }
+
+    public ButineRunner.Result collection_result() { return collection_result(collectionAttemptId); }
+
+    private void remember_result(ButineRunner.Result result) {
+        if (result == null) return;
+        collectionResults.put(result.attemptId, result);
+        // Keep bounded recent evidence without overwriting an active request with a later refusal.
+        if (collectionResults.size() > 32)
+            collectionResults.remove(collectionResults.keySet().iterator().next());
+    }
+
+    private VisionPose collection_pose() {
+        try {
+            VisionPose pose = drive == null ? null : drive.pose();
+            return pose != null && pose.is_finite() ? pose : null;
+        } catch (RuntimeException unavailable) { return null; }
+    }
+
+    /** Publish a preflight outcome without cancelling or replacing work already using the drive. */
+    public long decline_collection(VisionPose depot, ButineRunner.Outcome outcome,
+                                   ButineRunner.Reason reason, String detail) {
+        ButineRunner.Result result = ButineRunner.unstarted_result(depot, collection_pose(), outcome, reason, detail);
+        collectionAttemptId = result.attemptId;
+        remember_result(result);
+        report = result.detail;
+        return result.attemptId;
+    }
+
+    /** External timeout/fault/preemption; only the runner's arrival gates may report success. */
+    public void finish_collection(ButineRunner.Outcome outcome, ButineRunner.Reason reason, String detail) {
+        if (outcome == null || outcome == ButineRunner.Outcome.COMPLETE_AT_DEPOT || reason == null)
+            throw new IllegalArgumentException("Only the runner's arrival gates can report depot success");
+        if (collection == null) return;
+        long accepted = collection.last_attempt_id();
+        if (collection.is_busy() || (accepted != 0 && collection.result(accepted) == null)) {
+            try {
+                collection.finish(outcome, reason, detail);
+                report = detail;
+            } catch (RuntimeException failure) {
+                report = detail + "; collection stop failed: " + failure;
+            }
+            finally { remember_result(collection.result(accepted)); }
+        }
+    }
+
+    /** The OpMode supplies getRuntime(); this facade creates no match timer. */
+    public void set_auto_timer(DoubleSupplier timer) {
+        if (collection != null) collection.set_auto_timer(timer);
+    }
 
     /** One launch attempt per OpMode. Camera initialization outcome remains asynchronous. */
     public boolean start() {
@@ -116,13 +179,16 @@ public final class CompetitionWorkers {
             if (corrections.stats().applied != applied) invalidatedPoseNanos = System.nanoTime();
             if (collection != null && collection.is_busy()) {
                 if (!ready()) {
-                    cancel_drive();
+                    finish_collection(ButineRunner.Outcome.ABORTED, ButineRunner.Reason.VISION_UNAVAILABLE,
+                            "collection cancelled: vision unavailable or stale");
                     report = "collection cancelled: vision unavailable or stale";
                 } else collection.update();
             }
         } catch (RuntimeException failure) {
-            report = "worker service failed: " + failure;
-            cancel_drive();
+            String detail = "worker service failed: " + failure;
+            finish_collection(ButineRunner.Outcome.ABORTED, ButineRunner.Reason.SERVICE_FAILURE, detail);
+            cancel_drive(ButineRunner.Reason.SERVICE_FAILURE);
+            report = detail;
             visionFailed = true;
             vision.request_stop();
             if (planner != null) planner.request_stop();
@@ -130,18 +196,55 @@ public final class CompetitionWorkers {
     }
 
     public boolean request_collection(VisionPose depot, Butine.Params params, double speedScale) {
-        if (collection == null || !ready() || !planner.is_running() || owns_drive()) {
-            report = "collection unavailable: need idle drive, planner and fresh localized detector frame";
+        if (collection == null) {
+            decline_collection(depot, ButineRunner.Outcome.REFUSED, ButineRunner.Reason.PLANNER_UNAVAILABLE,
+                    "collection unavailable: planner is disabled");
             return false;
         }
+        // Preserve completed evidence before the runner accepts a new request.
+        remember_result(collection.last_result());
+        if (stopping) {
+            decline_collection(depot, ButineRunner.Outcome.REFUSED, ButineRunner.Reason.STOP_REQUESTED,
+                    "collection unavailable: OpMode is stopping");
+            return false;
+        }
+        if (owns_drive()) {
+            decline_collection(depot, ButineRunner.Outcome.REFUSED, ButineRunner.Reason.DRIVE_BUSY,
+                    "collection unavailable: assistance already owns the drive");
+            return false;
+        }
+        long previousAttempt = collection.last_attempt_id();
         try {
-            if (!valid_pose()) return false;
+            if (!valid_pose()) {
+                decline_collection(depot, ButineRunner.Outcome.REFUSED, ButineRunner.Reason.INVALID_POSE,
+                        "collection unavailable: invalid localized pose");
+                return false;
+            }
+            if (!ready() || !planner.is_running()) {
+                ButineRunner.Reason reason = !ready() ? ButineRunner.Reason.VISION_UNAVAILABLE
+                        : ButineRunner.Reason.PLANNER_UNAVAILABLE;
+                decline_collection(depot, ButineRunner.Outcome.REFUSED, reason,
+                        "collection unavailable: need running planner and fresh localized detector frame");
+                return false;
+            }
             boolean accepted = collection.run_butine(depot, params, speedScale);
+            collectionAttemptId = collection.last_attempt_id();
+            remember_result(collection.result(collectionAttemptId));
             report = collection.last_report();
             return accepted;
         } catch (RuntimeException failure) {
-            cancel_drive();
-            report = "collection request failed: " + failure;
+            String detail = "collection request failed: " + failure;
+            if (collection.last_attempt_id() != previousAttempt) {
+                collectionAttemptId = collection.last_attempt_id();
+                finish_collection(ButineRunner.Outcome.ABORTED,
+                        failure instanceof IllegalArgumentException ? ButineRunner.Reason.INVALID_INPUT
+                                : ButineRunner.Reason.SERVICE_FAILURE, detail);
+                remember_result(collection.result(collectionAttemptId));
+            } else {
+                decline_collection(depot, ButineRunner.Outcome.REFUSED,
+                        ButineRunner.Reason.SERVICE_FAILURE, detail);
+            }
+            report = detail;
             return false;
         }
     }
@@ -172,7 +275,9 @@ public final class CompetitionWorkers {
     private void invalidate_pose() {
         vision.submit_pose(null);
         invalidatedPoseNanos = System.nanoTime();
-        cancel_drive();
+        finish_collection(ButineRunner.Outcome.ABORTED, ButineRunner.Reason.INVALID_POSE,
+                "assistance unavailable: invalid localized pose");
+        cancel_drive(ButineRunner.Reason.INVALID_POSE);
         report = "assistance unavailable: invalid localized pose";
     }
 
@@ -184,7 +289,7 @@ public final class CompetitionWorkers {
             map.clear();
             invalidatedPoseNanos = System.nanoTime();
         }
-        cancel_drive();
+        cancel_drive(ButineRunner.Reason.POSE_RESET);
         report = "pose origin changed; waiting for a fresh localized detector frame";
     }
 
@@ -206,11 +311,20 @@ public final class CompetitionWorkers {
 
     /** Manual/static-path override cancels assistance before the caller commands Pedro again. */
     public void cancel_drive() {
+        cancel_drive(ButineRunner.Reason.MANUAL_OVERRIDE);
+    }
+
+    public void cancel_drive(ButineRunner.Reason reason) {
+        if (reason == null) throw new IllegalArgumentException("cancellation reason is required");
         boolean collecting = collection != null && collection.is_busy();
         boolean correcting = corrections != null && corrections.is_busy();
         if (!collecting && !correcting) return;
         try {
-            if (collecting) collection.stop();
+            if (collecting) {
+                long accepted = collection.active_attempt_id();
+                try { collection.finish(ButineRunner.Outcome.CANCELLED, reason, "collection cancelled: " + reason); }
+                finally { remember_result(collection.result(accepted)); }
+            }
             else drive.stop();
         } catch (RuntimeException failure) {
             report = "assistance stop failed: " + failure;
@@ -244,8 +358,16 @@ public final class CompetitionWorkers {
     /** Invalidate work immediately; no motor commands, SDK shutdown or thread joins occur here. */
     public void request_stop() {
         stopping = true;
-        try { if (planner != null) planner.request_stop(); }
-        finally { if (vision != null) vision.request_stop(); }
+        try {
+            if (collection != null) {
+                long accepted = collection.active_attempt_id();
+                try { collection.request_stop(); }
+                finally { remember_result(collection.result(accepted)); }
+            }
+        } finally {
+            try { if (planner != null) planner.request_stop(); }
+            finally { if (vision != null) vision.request_stop(); }
+        }
     }
 
     /** Call after motor outputs are stopped. Original owners retain blocked SDK/solver work. */
