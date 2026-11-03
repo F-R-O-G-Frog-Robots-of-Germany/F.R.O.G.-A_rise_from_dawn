@@ -33,7 +33,7 @@ $taskTests = @(Get-ChildItem -LiteralPath (Join-Path $taskRepo 'tests\java\org\f
 # Compile production code against real SDK signatures first. Fixtures never establish SDK compatibility.
 & javac -source 8 -target 8 -proc:none -classpath $taskCp -d $taskReal @($taskSources.FullName) @($taskTests.FullName)
 if ($LASTEXITCODE -ne 0) { throw 'Real SDK compilation failed.' }
-foreach ($taskTest in @('ButineRegression', 'PlannerAuditChecks', 'ButineObstacleChecks', 'ButineIntakeChecks', 'ContinuousRunnerChecks', 'VisionChecks', 'VisionAuditChecks', 'RunnerChecks', 'RunnerAuditChecks', 'CpuUtilityChecks', 'ButineWorkerChecks', 'AsyncRunnerChecks', 'HivePoseEstimatorChecks', 'HiveLimelightObservationChecks')) {
+foreach ($taskTest in @('ButineRegression', 'PlannerAuditChecks', 'ButineObstacleChecks', 'ButineIntakeChecks', 'ButineParkingChecks', 'ContinuousRunnerChecks', 'VisionChecks', 'VisionAuditChecks', 'RunnerChecks', 'RunnerAuditChecks', 'RunnerOutcomeChecks', 'CpuUtilityChecks', 'ButineWorkerChecks', 'AsyncRunnerChecks', 'HivePoseEstimatorChecks', 'HiveLimelightObservationChecks')) {
     & java -cp ($taskReal + ';' + $taskCp) ('org.firstinspires.ftc.teamcode.limelight.' + $taskTest)
     if ($LASTEXITCODE -ne 0) { throw "$taskTest failed." }
 }
