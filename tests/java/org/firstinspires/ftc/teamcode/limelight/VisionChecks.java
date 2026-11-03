@@ -1,11 +1,10 @@
 package org.firstinspires.ftc.teamcode.limelight;
 
-import java.lang.reflect.Method;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-/** Deterministic regression checks for real map, calibration and latency interpolation. */
+/** Deterministic regression checks for real map, calibration and camera lifecycle. */
 public final class VisionChecks {
     private static int checks;
 
@@ -15,7 +14,7 @@ public final class VisionChecks {
         invalid_data();
         bounded_capacity();
         calibration();
-        capture_pose_history();
+        stopped_camera();
         System.out.println("Vision checks passed: " + checks);
     }
 
@@ -124,21 +123,8 @@ public final class VisionChecks {
         require(calibration.project(0, 0, VisionPose.ZERO) == null, "Invalid mounting produces no pollen");
     }
 
-    private static void capture_pose_history() throws Exception {
+    private static void stopped_camera() {
         Limelight camera = new Limelight();
-        Method push = Limelight.class.getDeclaredMethod("push_pose", long.class, VisionPose.class);
-        Method at = Limelight.class.getDeclaredMethod("pose_at", long.class);
-        push.setAccessible(true);
-        at.setAccessible(true);
-        push.invoke(camera, 100L, new VisionPose(0, 0, Math.toRadians(179)));
-        push.invoke(camera, 200L, new VisionPose(10, 20, Math.toRadians(-179)));
-        VisionPose midpoint = (VisionPose) at.invoke(camera, 150L);
-        close(midpoint.x, 5, "Capture-time x interpolation");
-        close(midpoint.y, 10, "Capture-time y interpolation");
-        close(Math.abs(VisionPose.wrap_pi(midpoint.heading)), Math.PI,
-                "Heading interpolation takes the short arc across the wrap boundary");
-        require(((VisionPose) at.invoke(camera, 0L)).x == 0,
-                "Frame older than history uses the oldest available pose");
         camera.stop();
         require(camera.status() == Limelight.Status.NOT_INITIALISED && camera.get_pose() == null
                 && !camera.has_pollen_frame(), "Stopping invalidates camera observations");

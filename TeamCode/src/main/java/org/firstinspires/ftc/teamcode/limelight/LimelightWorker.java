@@ -16,8 +16,6 @@ import java.util.concurrent.locks.LockSupport;
 public final class LimelightWorker {
     private static final long LOOP_NANOS = 10_000_000L;
     private static final long HEALTH_NANOS = 250_000_000L;
-    private static final int POSE_HISTORY = 64;
-    private static final long POSE_BUCKET_MS = 10;
 
     /** Configure before start. CPU indices are zero based; -1 leaves Android scheduling enabled. */
     public int preferredCore = 1;
@@ -110,10 +108,6 @@ public final class LimelightWorker {
     private final Limelight camera;
     private final PollenMap map;
     private final Object lifecycleLock = new Object(), inputLock = new Object();
-    private final VisionPose[] poses = new VisionPose[POSE_HISTORY];
-    private final long[] poseStamps = new long[POSE_HISTORY];
-    private int poseNext, poseCount;
-    private long poseBucket = -1;
     private volatile VisionPose latestPose;
     private volatile long latestPoseStamp = -1;
     private volatile boolean stopRequested, mappingEnabled = true;
@@ -152,8 +146,6 @@ public final class LimelightWorker {
             affinityRestoreError = "";
             latest = latest.stopped();
             synchronized (inputLock) {
-                poseCount = poseNext = 0;
-                poseBucket = -1;
                 ingestedPoseEpoch = -1;
                 latestPose = null;
                 latestPoseStamp = -1;
@@ -180,8 +172,6 @@ public final class LimelightWorker {
                 synchronized (inputLock) {
                     latestPose = null;
                     latestPoseStamp = -1;
-                    poseCount = poseNext = 0;
-                    poseBucket = -1;
                     poseEpoch++;
                 }
             }
@@ -189,18 +179,6 @@ public final class LimelightWorker {
         }
         long stamp = VisionPose.now_ms();
         synchronized (inputLock) {
-            long bucket = stamp / POSE_BUCKET_MS;
-            if (poseCount > 0 && bucket == poseBucket) {
-                int index = (poseNext + POSE_HISTORY - 1) % POSE_HISTORY;
-                poses[index] = pose;
-                poseStamps[index] = stamp;
-            } else {
-                poses[poseNext] = pose;
-                poseStamps[poseNext] = stamp;
-                poseNext = (poseNext + 1) % POSE_HISTORY;
-                poseCount = Math.min(POSE_HISTORY, poseCount + 1);
-                poseBucket = bucket;
-            }
             latestPose = pose;
             latestPoseStamp = stamp;
         }
@@ -269,40 +247,12 @@ public final class LimelightWorker {
         return thread == null;
     }
 
-    private void ingest_poses() {
-        VisionPose[] copy;
-        long[] stamps;
+    private void synchronize_pose_epoch() {
         long epoch;
-        synchronized (inputLock) {
-            epoch = poseEpoch;
-            copy = new VisionPose[poseCount];
-            stamps = new long[poseCount];
-            for (int i = 0; i < poseCount; i++) {
-                int index = (poseNext - poseCount + i + POSE_HISTORY) % POSE_HISTORY;
-                copy[i] = poses[index];
-                stamps[i] = poseStamps[index];
-            }
-            poseCount = 0;
-        }
+        synchronized (inputLock) { epoch = poseEpoch; }
         if (epoch != ingestedPoseEpoch) {
             camera.clear_pollen();
-            camera.clear_pose_history();
             ingestedPoseEpoch = epoch;
-        }
-        for (int i = 0; i < copy.length; i++) camera.record_pose(stamps[i], copy[i]);
-    }
-
-    private void reset_pending_trail() {
-        synchronized (inputLock) {
-            poseCount = poseNext = 0;
-            poseBucket = -1;
-            // A pose correction may already be queued; retain just that newest origin.
-            if (latestPose != null && latestPose.is_finite() && latestPoseStamp >= 0) {
-                poses[0] = latestPose;
-                poseStamps[0] = latestPoseStamp;
-                poseCount = poseNext = 1;
-                poseBucket = latestPoseStamp / POSE_BUCKET_MS;
-            }
         }
     }
 
@@ -337,9 +287,7 @@ public final class LimelightWorker {
                         pendingSnapshot = null;
                     }
                     if (token != 0) {
-                        int previousPipeline = camera.pipeline();
                         pipelineAckSuccess = camera.set_pipeline(pipeline);
-                        if (pipelineAckSuccess && previousPipeline != pipeline) reset_pending_trail();
                         pipelineAckToken = token;
                         if (!pipelineAckSuccess) error = "pipeline " + pipeline + " request failed";
                     }
@@ -350,8 +298,8 @@ public final class LimelightWorker {
                         healthAt = System.nanoTime() + HEALTH_NANOS;
                     }
                     if (stopRequested) break;
-                    // Ingest after potentially slow HTTP/status work, preserving original timestamps.
-                    ingest_poses();
+                    // Read the newest submitted pose after potentially slow HTTP/status work.
+                    synchronize_pose_epoch();
                     VisionPose pose;
                     long stamp, epoch;
                     synchronized (inputLock) { pose = latestPose; stamp = latestPoseStamp; epoch = poseEpoch; }

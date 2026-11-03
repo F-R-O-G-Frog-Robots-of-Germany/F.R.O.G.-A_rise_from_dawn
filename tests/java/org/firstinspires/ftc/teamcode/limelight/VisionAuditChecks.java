@@ -1,7 +1,6 @@
 package org.firstinspires.ftc.teamcode.limelight;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -13,7 +12,6 @@ public final class VisionAuditChecks {
     public static void main(String[] args) throws Exception {
         sequence_order();
         pinhole_geometry();
-        fast_pose_history();
         bounded_map_work();
         invalid_input_matrix();
         frustum_boundaries();
@@ -66,18 +64,6 @@ public final class VisionAuditChecks {
                 }
             }
         }
-    }
-
-    private static void fast_pose_history() throws Exception {
-        Limelight camera = new Limelight();
-        Method push = Limelight.class.getDeclaredMethod("push_pose", long.class, VisionPose.class);
-        Method at = Limelight.class.getDeclaredMethod("pose_at", long.class);
-        push.setAccessible(true); at.setAccessible(true);
-        for (long t = 0; t <= 600; t++) push.invoke(camera, t, new VisionPose(t / 10.0, 0, 0));
-        VisionPose captured = (VisionPose) at.invoke(camera, 100L);
-        close(captured.x, 10, "500 ms capture pose survives a 1 ms application loop");
-        captured = (VisionPose) at.invoke(camera, 595L);
-        close(captured.x, 59.5, "Recent capture pose still interpolates accurately");
     }
 
     private static void bounded_map_work() {

@@ -23,8 +23,6 @@ public final class Limelight {
     public static final int APRILTAG_PIPELINE = 1;
     public static final int MAX_DETECTIONS = 128;
     public static final double MAX_LATENCY_MS = 500.0;
-    private static final int POSE_HISTORY = 64;
-    private static final long POSE_SAMPLE_INTERVAL_MS = 10;
 
     public enum Status { NOT_INITIALISED, OK, INIT_FAILED }
 
@@ -101,12 +99,7 @@ public final class Limelight {
     private long lastHubTimestamp = Long.MIN_VALUE;
     private LLResult lastAnalysedResult;
     private VisionPose currentPose = VisionPose.ZERO;
-    private VisionPose capturePose;
-    private final long[] poseStamps = new long[POSE_HISTORY];
-    private final VisionPose[] poseHistory = new VisionPose[POSE_HISTORY];
-    private int poseCount;
-    private int poseNext;
-    private long poseAnchorMs;
+    private VisionPose framePose;
 
     public Limelight() { this(null, "limelight"); }
     public Limelight(HardwareMap hardwareMap) { this(hardwareMap, "limelight"); }
@@ -158,19 +151,10 @@ public final class Limelight {
         }
     }
 
-    /** Call every robot loop to feed the capture-time pose history. */
+    /** Process detector results using the robot pose supplied by this loop. */
     public void update(VisionPose pose) {
         long stamp = VisionPose.now_ms();
-        record_pose(stamp, pose);
         read_result(pose, stamp, Long.MAX_VALUE);
-    }
-
-    /** Worker-only ingestion: timestamps remain those of the robot loop, even after slow I/O. */
-    void record_pose(long stamp, VisionPose pose) {
-        if (stamp >= 0 && pose != null && pose.is_finite()) {
-            currentPose = pose;
-            push_pose(stamp, pose);
-        }
     }
 
     /** Never create detector negative evidence from odometry older than 100 ms. */
@@ -178,6 +162,7 @@ public final class Limelight {
 
     private void read_result(VisionPose pose, long poseStamp, long maxPoseAgeMs) {
         long now = VisionPose.now_ms();
+        if (poseStamp >= 0 && pose != null && pose.is_finite()) currentPose = pose;
         if (device == null) {
             lastResult = empty_result();
             return;
@@ -250,12 +235,11 @@ public final class Limelight {
                     && (result == lastAnalysedResult
                     || result.getControlHubTimeStamp() == lastHubTimestamp)) return;
             double latency = captureLatency + targetingLatency + parseLatency + age;
-            // A corrupt latency supplies no usable capture pose or negative evidence.
+            // Reject unusable frame timing metadata without adjusting the supplied robot pose.
             if (!Double.isFinite(latency) || captureLatency < 0 || targetingLatency < 0
                     || parseLatency < 0 || latency > MAX_LATENCY_MS
                     || !Double.isFinite(confidenceScale) || confidenceScale <= 0
                     || !valid_calibration()) return;
-            VisionPose framePose = pose_at(Math.max(0, now - (long) latency));
             ArrayList<Pollen> detections = new ArrayList<>();
             List<LLResultTypes.DetectorResult> detectorResults = result.getDetectorResults();
             int count = Math.min(detectorResults == null ? 0 : detectorResults.size(), MAX_DETECTIONS);
@@ -268,11 +252,11 @@ public final class Limelight {
                 if (!Double.isFinite(confidence) || confidence < 0 || confidence > 1
                         || !Double.isFinite(area) || area < 0) continue;
                 VisionPose position = calibration.project(detection.getTargetXDegrees(),
-                        detection.getTargetYDegrees(), framePose);
+                        detection.getTargetYDegrees(), pose);
                 if (position != null) detections.add(new Pollen(-1, position, confidence, area, now));
             }
             currentFrame = Collections.unmodifiableList(detections);
-            capturePose = framePose;
+            framePose = pose;
             publishedFrameMs = now;
             publishedFrameAgeMs = age;
             lastFrameTimestamp = Double.isFinite(timestamp) && timestamp > 0 ? timestamp : 0;
@@ -355,17 +339,18 @@ public final class Limelight {
     public double get_ta() { return has_target() ? lastResult.ta : 0; }
     public Result get_result() { return lastResult; }
     public List<Pollen> get_pollen() { return currentFrame; }
-    public void clear_pollen() { currentFrame = Collections.emptyList(); capturePose = null; }
+    public void clear_pollen() { currentFrame = Collections.emptyList(); framePose = null; }
     public long pollen_frame_sequence() { return frameSequence; }
     public boolean has_pollen_frame() {
-        return capturePose != null && selectedPipeline == DETECTOR_PIPELINE
+        return framePose != null && selectedPipeline == DETECTOR_PIPELINE
                 && lastResult.pipelineIndex == DETECTOR_PIPELINE
                 && result_is_fresh()
                 && publishedFrameAgeMs <= Math.max(0, maxFrameAgeMs)
                 && VisionPose.now_ms() - publishedFrameMs
                 <= Math.max(0, maxFrameAgeMs) - publishedFrameAgeMs;
     }
-    public VisionPose pollen_frame_pose() { return capturePose != null ? capturePose : currentPose; }
+    /** Robot pose supplied when this detector frame was processed; no capture-time compensation. */
+    public VisionPose pollen_frame_pose() { return framePose != null ? framePose : currentPose; }
     public VisionPose get_pose() { return result_is_fresh() ? lastResult.pose : null; }
     public VisionPose getPose() { return get_pose(); }
     public LimelightCalibration calibration() { return calibration; }
@@ -386,38 +371,19 @@ public final class Limelight {
         if (!error.isEmpty()) telemetry.addData("Limelight error", error);
     }
 
-    /** Owner-thread reset after invalid localization: never interpolate across an unknown pose gap. */
-    void clear_pose_history() { poseCount = poseNext = 0; }
-
     private void reset_frame() {
         currentFrame = Collections.emptyList();
         lastFrameTimestamp = 0;
         lastHubTimestamp = Long.MIN_VALUE;
         lastAnalysedResult = null;
         lastReadResult = null;
-        capturePose = null;
-        clear_pose_history();
+        framePose = null;
         // Sequence is monotonic across init, stop and pipeline switches.
     }
 
     private Result empty_result() {
         return new Result(false, 0, 0, 0, null, 0, 0, 0,
                 0, 0, 0, temperature, cpu, fps, -1, 0, 0);
-    }
-
-    private void push_pose(long stamp, VisionPose pose) {
-        if (poseCount > 0 && stamp >= poseAnchorMs
-                && stamp - poseAnchorMs < POSE_SAMPLE_INTERVAL_MS) {
-            int latest = (poseNext + POSE_HISTORY - 1) % POSE_HISTORY;
-            poseStamps[latest] = stamp;
-            poseHistory[latest] = pose;
-            return;
-        }
-        poseAnchorMs = stamp;
-        poseStamps[poseNext] = stamp;
-        poseHistory[poseNext] = pose;
-        poseNext = (poseNext + 1) % POSE_HISTORY;
-        poseCount = Math.min(POSE_HISTORY, poseCount + 1);
     }
 
     private boolean valid_calibration() {
@@ -439,7 +405,7 @@ public final class Limelight {
         long remaining = result_remaining_ms();
         long limit = Math.max(0, maxFrameAgeMs);
         long elapsed = Math.max(0, VisionPose.now_ms() - publishedFrameMs);
-        if (remaining < 0 || capturePose == null || selectedPipeline != DETECTOR_PIPELINE
+        if (remaining < 0 || framePose == null || selectedPipeline != DETECTOR_PIPELINE
                 || lastResult.pipelineIndex != DETECTOR_PIPELINE || publishedFrameAgeMs > limit
                 || elapsed > limit - publishedFrameAgeMs) return -1;
         return Math.min(remaining, limit - publishedFrameAgeMs - elapsed);
@@ -452,21 +418,4 @@ public final class Limelight {
                 <= Math.max(0, maxFrameAgeMs) - lastResultInitialAgeMs;
     }
 
-    private VisionPose pose_at(long stamp) {
-        if (poseCount == 0) return currentPose;
-        int newer = -1;
-        int older = -1;
-        for (int i = 0; i < poseCount; i++) {
-            int index = (poseNext + POSE_HISTORY - 1 - i) % POSE_HISTORY;
-            if (poseStamps[index] > stamp) newer = index;
-            else { older = index; break; }
-        }
-        if (older < 0) return newer >= 0 ? poseHistory[newer] : currentPose;
-        if (newer < 0 || poseStamps[newer] == poseStamps[older]) return poseHistory[older];
-        double t = (double) (stamp - poseStamps[older]) / (poseStamps[newer] - poseStamps[older]);
-        VisionPose from = poseHistory[older];
-        VisionPose to = poseHistory[newer];
-        return new VisionPose(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t,
-                from.heading + VisionPose.wrap_pi(to.heading - from.heading) * t);
-    }
 }

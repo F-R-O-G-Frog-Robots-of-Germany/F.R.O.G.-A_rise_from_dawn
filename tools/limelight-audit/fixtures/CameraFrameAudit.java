@@ -8,7 +8,7 @@ import java.util.*;
 public final class CameraFrameAudit {
     static int checks; static final VisionPose POSE=new VisionPose(20,20,0);
     public static void main(String[] args) {
-        lifecycle(); frame_matrix(); calibration_and_pose(); limits();
+        lifecycle(); frame_matrix(); current_pose_projection(); calibration_and_pose(); limits();
         System.out.println("Camera frame audit checks passed: "+checks);
     }
     static void lifecycle(){
@@ -55,6 +55,25 @@ public final class CameraFrameAudit {
         camera.update(POSE);require(camera.pollen_frame_sequence()==sequence+2,"same frame can be retried with valid pose");
         camera.clear_pollen();require(!camera.has_pollen_frame(),"manual clearing cannot become empty frame evidence");
         device.failRead=true;camera.update(POSE);require(!camera.has_target()&&!camera.has_pollen_frame(),"read exception invalidates latest diagnostics");
+    }
+    static void current_pose_projection(){
+        Limelight3A device=new Limelight3A();HardwareMap hardware=new HardwareMap();hardware.device=device;
+        Limelight camera=new Limelight(hardware);camera.init();
+        device.result=frame(1,1);camera.update(POSE);
+        VisionPose current=new VisionPose(50,40,Math.PI/2);
+        LLResult delayed=frame(2,2);delayed.capture=125;delayed.targeting=20;delayed.parse=5;delayed.age=10;
+        delayed.detectors.add(new LLResultTypes.DetectorResult());device.result=delayed;camera.update(current);
+        VisionPose projected=camera.get_pollen().get(0).position;
+        require(Math.abs(projected.x-50)<1e-9&&Math.abs(projected.y-66)<1e-9,
+                "delayed detector result uses current supplied translation and heading without rewind");
+        require(camera.pollen_frame_pose()==current,"detector metadata retains the same supplied current pose");
+        require(camera.get_result().captureLatency==125&&camera.get_result().targetingLatency==20
+                &&camera.get_result().parseLatency==5&&camera.get_result().stalenessMs==10,
+                "SDK latency and staleness metadata remain available");
+        long sequence=camera.pollen_frame_sequence();camera.update(new VisionPose(90,90,0));
+        require(camera.pollen_frame_sequence()==sequence&&camera.pollen_frame_pose()==current,
+                "repeated image neither reprojects detections nor replaces frame pose metadata");
+        camera.stop();
     }
     static void calibration_and_pose(){
         Limelight3A device=new Limelight3A();HardwareMap hardware=new HardwareMap();hardware.device=device;

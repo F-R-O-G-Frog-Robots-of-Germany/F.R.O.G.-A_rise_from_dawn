@@ -5,7 +5,6 @@ import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.teamcode.limelight.*;
 
-import java.lang.reflect.Field;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -22,13 +21,13 @@ public final class LimelightWorkerAudit {
         async_lifecycle_and_commands();
         stale_snapshot_and_blocked_stop();
         stale_odometry_and_mapping_pause();
-        slow_health_preserves_capture_history();
-        invalid_input_and_pipeline_history();
+        slow_health_uses_latest_pose();
+        invalid_input_and_pipeline_guards();
         invalid_epoch_cannot_replay_unconsumed_frame();
         concurrent_map_access();
         failed_init();
         async_runner();
-        corrected_pose_starts_detector_history();
+        corrected_pose_used_by_detector();
         System.out.println("Limelight worker audit checks passed: " + checks);
     }
 
@@ -50,9 +49,6 @@ public final class LimelightWorkerAudit {
             require(!context.worker.request_snapshot(null) && !context.worker.request_snapshot(""),
                     "invalid snapshot names rejected");
             for (int i = 0; i < 10000; i++) context.worker.submit_pose(new VisionPose(20 + i / 10000.0, 20, 0));
-            Field count = LimelightWorker.class.getDeclaredField("poseCount");
-            count.setAccessible(true);
-            require(count.getInt(context.worker) <= 64, "fast robot input stays bounded");
             device.startGate.countDown();
             await(() -> context.worker.pipeline_applied(newest, 0), "coalesced latest pipeline applied");
             await(() -> "one".equals(device.snapshot), "queued snapshot captured");
@@ -122,32 +118,30 @@ public final class LimelightWorkerAudit {
         } finally { device.release(); context.worker.stop(); }
     }
 
-    private static void slow_health_preserves_capture_history() throws Exception {
+    private static void slow_health_uses_latest_pose() throws Exception {
         TestCamera device = new TestCamera();
         device.statusGate = new CountDownLatch(1);
         Context context = new Context(device);
         try {
             context.worker.start();
             require(device.statusEntered.await(2, TimeUnit.SECONDS), "slow health request starts on worker");
-            long captureStamp = 0;
             for (int i = 0; i <= 30; i++) {
-                if (i == 12) captureStamp = now_ms();
                 context.worker.submit_pose(new VisionPose(20 + i, 20, 0));
                 Thread.sleep(10);
             }
             LLResult delayed = frame(1, true);
-            delayed.capture = now_ms() - captureStamp;
+            delayed.capture = 180;
             device.frame = delayed;
             device.statusGate.countDown();
             await(() -> context.map.size() == 1, "frame received after slow health status maps successfully");
-            require(Math.abs(context.map.snapshot().get(0).position.x - 58) < 1.5,
-                    "capture pose32 plus range26 comes from buffered history, not latest pose50");
-            Field count = Limelight.class.getDeclaredField("poseCount"); count.setAccessible(true);
-            require(count.getInt(context.camera) >= 25, "slow status cannot discard robot-loop capture history");
+            require(Math.abs(context.map.snapshot().get(0).position.x - 76) < 1e-9,
+                    "delayed image after status I/O uses newest pose50 plus range26");
+            require(context.camera.pollen_frame_pose().x == 50,
+                    "frame pose metadata uses the newest robot input after slow status I/O");
         } finally { device.release(); context.worker.stop(); }
     }
 
-    private static void invalid_input_and_pipeline_history() throws Exception {
+    private static void invalid_input_and_pipeline_guards() throws Exception {
         TestCamera device = new TestCamera();
         Context context = new Context(device);
         try {
@@ -167,9 +161,7 @@ public final class LimelightWorkerAudit {
             device.readGate = new CountDownLatch(1);
             device.blockReadPipeline = 1;
             long token = context.worker.request_pipeline(1);
-            require(device.readEntered.await(2, TimeUnit.SECONDS), "switched pipeline blocks after trail reset");
-            Field count = Limelight.class.getDeclaredField("poseCount"); count.setAccessible(true);
-            require(count.getInt(context.camera) <= 1, "pipeline switch retains only newest odometry origin");
+            require(device.readEntered.await(2, TimeUnit.SECONDS), "switched pipeline blocks before result confirmation");
             require(!context.worker.pipeline_applied(token, 1), "switch request alone is not camera pipeline confirmation");
             LLResult tagPipeline = frame(4, false); tagPipeline.pipeline = 1; device.frame = tagPipeline;
             device.readGate.countDown();
@@ -203,12 +195,6 @@ public final class LimelightWorkerAudit {
             await(() -> Math.abs(context.map.snapshot().get(0).position.x - 56) < 1e-9,
                     "next genuinely new image uses new30+26 origin56");
         } finally { device.release(); context.worker.stop(); }
-    }
-
-    private static long now_ms() throws Exception {
-        java.lang.reflect.Method clock = VisionPose.class.getDeclaredMethod("now_ms");
-        clock.setAccessible(true);
-        return (Long) clock.invoke(null);
     }
 
     private static void concurrent_map_access() throws Exception {
@@ -279,7 +265,7 @@ public final class LimelightWorkerAudit {
         } finally { device.release(); runner.stop(); }
     }
 
-    private static void corrected_pose_starts_detector_history() throws Exception {
+    private static void corrected_pose_used_by_detector() throws Exception {
         TestCamera device = new TestCamera();
         LLResult tags = frame(2, false); tags.pipeline = 1; tags.tags = 1;
         tags.botpose = new org.firstinspires.ftc.robotcore.external.navigation.Pose3D(

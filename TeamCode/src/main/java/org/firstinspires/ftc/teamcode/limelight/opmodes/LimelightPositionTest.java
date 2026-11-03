@@ -113,7 +113,7 @@ public final class LimelightPositionTest extends LinearOpMode {
                             LimelightGeometry.VERTICAL_FOV_DEG);
                     int i = 0;
                     VisionPose capture = camera.pollen_frame_pose();
-                    telemetry.addData("Frame capture pose", "%.1f, %.1f @ %.1f deg", capture.x, capture.y,
+                    telemetry.addData("Frame processing pose", "%.1f, %.1f @ %.1f deg", capture.x, capture.y,
                             Math.toDegrees(capture.heading));
                     for (Pollen pollen : camera.get_pollen()) {
                         if (i == 5) break;
