@@ -36,6 +36,7 @@ public final class ButineIntakeChecks {
         depot_heading_and_wall_reachability();
         timing_and_deadlines();
         intake_overshoot();
+        lookahead_selection_and_elapsed_cutoff();
         legacy_and_configuration();
         System.out.println("Butine intake checks passed: " + checks);
     }
@@ -113,6 +114,9 @@ public final class ButineIntakeChecks {
         for (int i = 0; i < 5; i++) five.add(pollen(i, 30, 50));
         plan = Butine.solve(five, start, depot, p);
         require(plan.fittingRuns == 0, "simultaneous fifth contact rejects the outbound pass rather than silently truncating IDs");
+        p.lookaheadRuns = 2;
+        require(Butine.solve(five, start, depot, p).fittingRuns == 0,
+                "lookahead alternatives cannot bypass simultaneous fifth-contact rejection");
     }
 
     private static void route_events_and_continuity() {
@@ -272,6 +276,8 @@ public final class ButineIntakeChecks {
         require(Butine.solve(blocked, start, depot, p).fittingRuns == 1, "touch-only route is clear before the nearby obstacle");
         p.intakeOvershootIn = 1;
         require(Butine.solve(blocked, start, depot, p).fittingRuns == 0, "blocked straight overshoot rejects the candidate");
+        p.lookaheadRuns = 2;
+        require(Butine.solve(blocked, start, depot, p).fittingRuns == 0, "lookahead alternatives retain blocked overshoot rejection");
 
         p = settings(); p.minConfidence = .5; p.candidateCap = 1;
         List<Pollen> fifth = Arrays.asList(pollen(1, 50, 30), pollen(2, 50, 30), pollen(3, 50, 30),
@@ -281,5 +287,91 @@ public final class ButineIntakeChecks {
         require(Butine.solve(fifth, start, depot, p).runs[0].count == 4, "four contacts fit before extending the pass");
         p.intakeOvershootIn = 1;
         require(Butine.solve(fifth, start, depot, p).fittingRuns == 0, "incidental fifth contact during overshoot rejects the whole pass");
+        p.lookaheadRuns = 2;
+        require(Butine.solve(fifth, start, depot, p).fittingRuns == 0,
+                "lookahead alternatives retain incidental fifth-contact overshoot rejection");
+    }
+
+    private static void lookahead_selection_and_elapsed_cutoff() {
+        Butine.Params p = settings();
+        p.lookaheadRuns = 2; p.remainingS = 10.351561192057913; p.scoreOverheadS = 1; p.candidateCap = 12;
+        VisionPose depot = pose(30, 30, Math.PI / 2);
+        List<Pollen> field = Arrays.asList(pollen(0, 81, 86), pollen(1, 109, 73), pollen(2, 93, 78),
+                pollen(3, 29, 115), pollen(4, 47, 86), pollen(5, 37, 56), pollen(6, 80, 45), pollen(7, 77, 34));
+        ButineIntake.Candidate greedy = ButineIntake.plan_run(field, depot, depot, p, p.remainingS);
+        require(greedy != null && greedy.ids.length == 4, "fixture has a full immediately greedy first run");
+        ArrayList<Pollen> remainder = new ArrayList<>();
+        for (Pollen item : field) {
+            boolean selected = false;
+            for (int id : greedy.ids) if (id == item.id) selected = true;
+            if (!selected) remainder.add(item);
+        }
+        ButineIntake.Candidate greedyLater = ButineIntake.plan_run(remainder, depot, depot, p,
+                p.remainingS - greedy.route.timeS - p.scoreOverheadS);
+        require(greedyLater != null && greedyLater.ids.length == 3,
+                "appending one future run to the greedy first collects only seven");
+        Butine.Plan pair = Butine.solve(field, depot, depot, p);
+        require(pair.planningHorizonRuns == 2 && pair.runCount == 2 && pair.expectedCollected == 8,
+                "first-run alternatives recover all eight in one current plus one advisory run");
+        require(!Arrays.equals(greedy.ids, pair.runs[0].ids), "future-run evaluation changes the selected first run");
+        require(pair.runs[0].timeS > greedy.route.timeS,
+                "lookahead deliberately accepts a slower immediate run for a better total haul");
+        require(pair.committedTimeS <= p.remainingS, "both runs and two scoring overheads fit the same allowance");
+        near(pair.runs[0].timeS + pair.runs[1].timeS + 2 * p.scoreOverheadS, pair.committedTimeS,
+                "two-run budget charges scoring once per actual proposed run");
+        boolean[] found = new boolean[field.size()];
+        for (Butine.Run run : pair.runs) {
+            require(run.count <= 4 && run.route != null, "each hypothetical run retains physical route and capacity");
+            for (int id : run.ids) {
+                require(!found[id], "hypothetical run cannot collect the same ID twice"); found[id] = true;
+            }
+            for (int segment = 0; segment < run.route.segment_count(); segment++)
+                require(p.field.segment_clear(run.route.waypoint(segment), run.route.waypoint(segment + 1)),
+                        "every candidate's chosen route retains field clearance");
+            near(depot.x, run.route.waypoint(0).x, "both runs begin at the appropriate depot x in this fixture");
+            near(depot.y, run.route.waypoint(run.route.waypoint_count() - 1).y, "both runs return to depot y");
+        }
+        Butine.Plan repeated = Butine.solve(field, depot, depot, p);
+        require(Arrays.equals(pair.runs[0].ids, repeated.runs[0].ids)
+                && Arrays.equals(pair.runs[1].ids, repeated.runs[1].ids), "two-run selection has deterministic ties");
+        ArrayList<Pollen> reversed = new ArrayList<>(field);
+        Collections.reverse(reversed);
+        Butine.Plan permuted = Butine.solve(reversed, depot, depot, p);
+        require(Arrays.equals(pair.runs[0].ids, permuted.runs[0].ids)
+                && Arrays.equals(pair.runs[1].ids, permuted.runs[1].ids), "map input order cannot change deterministic selection");
+        p.lookaheadRuns = 3;
+        require(Butine.solve(field, depot, depot, p).runCount == 2, "physical planning never publishes a third run");
+        p.elapsedAutoS = 24.999;
+        require(Butine.solve(field, depot, depot, p).planningHorizonRuns == 2, "just before default elapsed cutoff keeps lookahead");
+        p.elapsedAutoS = 25;
+        Butine.Plan cut = Butine.solve(field, depot, depot, p);
+        require(cut.planningHorizonRuns == 1 && cut.runCount == 1 && Arrays.equals(greedy.ids, cut.runs[0].ids),
+                "at exactly twenty-five elapsed seconds selection becomes one-run greedy");
+        p.elapsedAutoS = 26;
+        require(Butine.solve(field, depot, depot, p).runCount == 1, "elapsed cutoff remains greedy afterwards");
+        p.elapsedAutoS = 0; p.greedyAtS = 0;
+        require(Butine.solve(field, depot, depot, p).planningHorizonRuns == 1, "explicit zero cutoff means greedy immediately");
+        p.greedyAtS = 25; p.remainingS = 1;
+        require(Butine.solve(field, depot, depot, p).planningHorizonRuns == 2,
+                "remaining allowance never substitutes for the supplied autonomous elapsed timer");
+        p.remainingS = 100; p.lookaheadRuns = 1;
+        require(Butine.solve(field, depot, depot, p).planningHorizonRuns == 1, "explicit one-run request remains one-run");
+        p.greedyAtS = 18; p.elapsedAutoS = 7;
+        Butine.Params copy = new Butine.Params(p);
+        near(18, copy.greedyAtS, "worker/runner parameter copies retain cutoff");
+        near(7, copy.elapsedAutoS, "worker/runner parameter copies retain official timer snapshot");
+        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, -1}) {
+            p.greedyAtS = invalid;
+            boolean rejected = false;
+            try { Butine.solve(field, depot, depot, p); } catch (IllegalArgumentException expected) { rejected = true; }
+            require(rejected, "invalid elapsed cutoff is rejected");
+        }
+        p.greedyAtS = 25;
+        for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, -1}) {
+            p.elapsedAutoS = invalid;
+            boolean rejected = false;
+            try { Butine.solve(field, depot, depot, p); } catch (IllegalArgumentException expected) { rejected = true; }
+            require(rejected, "invalid official timer snapshot is rejected");
+        }
     }
 }

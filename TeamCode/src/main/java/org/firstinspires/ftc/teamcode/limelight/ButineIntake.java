@@ -10,6 +10,8 @@ import java.util.List;
 public final class ButineIntake {
     private static final double EPSILON = 1e-9;
     private static final double OVERSHOOT_EPSILON_IN = 1e-7;
+    private static final int LOOKAHEAD_BEAM_WIDTH = 4;
+    private static final int LOOKAHEAD_ALTERNATIVES_PER_COUNT = 3;
     private ButineIntake() { }
 
     /** Immutable actual center path; pickup indices refer to its zero-based segments. */
@@ -146,21 +148,139 @@ public final class ButineIntake {
                     ? difference / params.kinematics.omegaMaxRadS + params.kinematics.turnSettleS : 0;
             Candidate candidate = plan_heading(all, new VisionPose(start.x, start.y, heading), depot, params, budgetS - alignmentTime);
             if (candidate == null) continue;
-            ArrayList<VisionPose> points = new ArrayList<>();
-            points.add(start);
-            for (int i = 0; i < candidate.route.waypoint_count(); i++) points.add(candidate.route.waypoint(i));
-            boolean[] active = new boolean[candidate.route.segment_count() + 1];
-            for (int i = 1; i < active.length; i++) active[i] = candidate.route.intake_active(i - 1);
-            ArrayList<Contact> contacts = new ArrayList<>();
-            for (int i = 0; i < candidate.ids.length; i++) contacts.add(new Contact(
-                    new Pollen(candidate.ids[i], candidate.poses[i], 1, 1, 0),
-                    candidate.route.pickup_segment(i) + 1, candidate.route.pickup_fraction(i)));
-            candidate = new Candidate(new Route(points, active, contacts, params, heading, depot), contacts);
+            candidate = with_alignment(candidate, start, depot, params, heading);
             if (candidate.route.timeS + Math.max(0, params.scoreOverheadS) > budgetS + EPSILON) continue;
             if (best == null || candidate.ids.length > best.ids.length
                     || (candidate.ids.length == best.ids.length && candidate.route.timeS < best.route.timeS - EPSILON)) best = candidate;
         }
         return best;
+    }
+
+    /** Bounded first-run alternatives; later-run scoring belongs to Butine, not this geometry layer. */
+    static List<Candidate> plan_candidates(List<Pollen> all, VisionPose start, VisionPose depot,
+                                          Butine.Params params, double budgetS) {
+        ArrayList<Candidate> candidates = new ArrayList<>();
+        Candidate greedy = plan_run(all, start, depot, params, budgetS);
+        if (greedy != null) offer_candidate(candidates, greedy);
+        heading_candidates(all, start, depot, params, budgetS, start, candidates);
+        if (start.distance_to(depot) <= EPSILON && params.kinematics.omegaMaxRadS > EPSILON) {
+            for (double heading : new double[]{0, Math.PI / 2, Math.PI, -Math.PI / 2}) {
+                double difference = Math.abs(Butine.wrap_pi(Butine.wrap_pi(heading) - Butine.wrap_pi(start.heading)));
+                if (difference <= EPSILON) continue;
+                double alignment = difference > params.kinematics.turnDeadbandRad
+                        ? difference / params.kinematics.omegaMaxRadS + params.kinematics.turnSettleS : 0;
+                heading_candidates(all, new VisionPose(start.x, start.y, heading), depot,
+                        params, budgetS - alignment, start, candidates);
+            }
+        }
+        // Keep the original greedy rollout as a baseline even if faster first-run alternatives
+        // fill its count bucket; they may leave a less useful remainder for the second run.
+        if (greedy != null) {
+            boolean represented = false;
+            for (Candidate candidate : candidates) if (same_ids(candidate, greedy)) { represented = true; break; }
+            if (!represented) candidates.add(greedy);
+        }
+        candidates.sort(ButineIntake::compare_candidates);
+        return candidates;
+    }
+
+    private static final class Prefix {
+        final ArrayList<VisionPose> outbound;
+        final Candidate candidate;
+        Prefix(ArrayList<VisionPose> outbound, Candidate candidate) {
+            this.outbound = outbound; this.candidate = candidate;
+        }
+    }
+
+    private static void heading_candidates(List<Pollen> all, VisionPose start, VisionPose depot,
+                                            Butine.Params params, double budgetS, VisionPose originalStart,
+                                            ArrayList<Candidate> candidates) {
+        if (budgetS <= 0) return;
+        ArrayList<VisionPose> origin = new ArrayList<>();
+        origin.add(start);
+        ArrayList<Prefix> beam = new ArrayList<>();
+        beam.add(new Prefix(origin, null));
+        int capacity = Math.min(Butine.POSSESSION_LIMIT, Math.max(1, params.capacity));
+        for (int depth = 0; depth < capacity && !beam.isEmpty(); depth++) {
+            ArrayList<Prefix> next = new ArrayList<>();
+            for (Prefix prefix : beam) {
+                HashSet<Integer> selected = new HashSet<>();
+                if (prefix.candidate != null) for (int id : prefix.candidate.ids) selected.add(id);
+                if (selected.size() == capacity) continue;
+                for (Prefix extension : extend_prefix(all, prefix.outbound, selected, start, depot, params, budgetS)) {
+                    Candidate candidate = extension.candidate;
+                    if (Math.abs(Butine.wrap_pi(originalStart.heading - start.heading)) > EPSILON)
+                        candidate = with_alignment(candidate, originalStart, depot, params, start.heading);
+                    // with_alignment includes the initial turn; restore the complete allowance here.
+                    double alignment = Math.abs(Butine.wrap_pi(originalStart.heading - start.heading));
+                    double totalBudget = budgetS + (alignment > params.kinematics.turnDeadbandRad
+                            ? alignment / params.kinematics.omegaMaxRadS + params.kinematics.turnSettleS : 0);
+                    if (candidate.route.timeS + Math.max(0, params.scoreOverheadS) > totalBudget + EPSILON) continue;
+                    offer_candidate(candidates, candidate);
+                    next.add(extension);
+                }
+            }
+            next.sort((a, b) -> compare_candidates(a.candidate, b.candidate));
+            if (next.size() > LOOKAHEAD_BEAM_WIDTH) next.subList(LOOKAHEAD_BEAM_WIDTH, next.size()).clear();
+            beam = next;
+        }
+    }
+
+    private static Candidate with_alignment(Candidate candidate, VisionPose start, VisionPose depot,
+                                              Butine.Params params, double heading) {
+        ArrayList<VisionPose> points = new ArrayList<>();
+        points.add(start);
+        for (int i = 0; i < candidate.route.waypoint_count(); i++) points.add(candidate.route.waypoint(i));
+        boolean[] active = new boolean[candidate.route.segment_count() + 1];
+        for (int i = 1; i < active.length; i++) active[i] = candidate.route.intake_active(i - 1);
+        ArrayList<Contact> contacts = new ArrayList<>();
+        for (int i = 0; i < candidate.ids.length; i++) contacts.add(new Contact(
+                new Pollen(candidate.ids[i], candidate.poses[i], 1, 1, 0),
+                candidate.route.pickup_segment(i) + 1, candidate.route.pickup_fraction(i)));
+        return new Candidate(new Route(points, active, contacts, params, heading, depot), contacts);
+    }
+
+    private static int compare_candidates(Candidate a, Candidate b) {
+        int compared = Integer.compare(b.ids.length, a.ids.length);
+        if (compared != 0) return compared;
+        compared = Double.compare(a.route.timeS, b.route.timeS);
+        if (compared != 0) return compared;
+        int[] left = a.ids.clone(), right = b.ids.clone();
+        Arrays.sort(left); Arrays.sort(right);
+        for (int i = 0; i < left.length; i++) {
+            compared = Integer.compare(left[i], right[i]);
+            if (compared != 0) return compared;
+        }
+        return Double.compare(a.route.collectionHeading, b.route.collectionHeading);
+    }
+
+    private static void offer_candidate(ArrayList<Candidate> candidates, Candidate candidate) {
+        int[] ids = candidate.ids.clone();
+        Arrays.sort(ids);
+        for (int i = 0; i < candidates.size(); i++) {
+            Candidate old = candidates.get(i);
+            if (old.ids.length != ids.length) continue;
+            int[] oldIds = old.ids.clone();
+            Arrays.sort(oldIds);
+            if (!Arrays.equals(ids, oldIds)) continue;
+            if (compare_candidates(candidate, old) < 0) candidates.set(i, candidate);
+            return;
+        }
+        candidates.add(candidate);
+        candidates.sort(ButineIntake::compare_candidates);
+        int count = 0;
+        for (int i = 0; i < candidates.size(); i++) {
+            if (candidates.get(i).ids.length == ids.length && ++count > LOOKAHEAD_ALTERNATIVES_PER_COUNT) {
+                candidates.remove(i); i--;
+            }
+        }
+    }
+
+    private static boolean same_ids(Candidate a, Candidate b) {
+        if (a.ids.length != b.ids.length) return false;
+        int[] left = a.ids.clone(), right = b.ids.clone();
+        Arrays.sort(left); Arrays.sort(right);
+        return Arrays.equals(left, right);
     }
 
     private static Candidate plan_heading(List<Pollen> all, VisionPose start, VisionPose depot,
@@ -170,52 +290,16 @@ public final class ButineIntake {
         Candidate best = null;
         HashSet<Integer> selected = new HashSet<>();
         int capacity = Math.min(Butine.POSSESSION_LIMIT, Math.max(1, params.capacity));
-        int cap = Math.max(1, Math.min(Butine.MAX_CANDIDATES, params.candidateCap));
-        double c = Math.cos(start.heading), s = Math.sin(start.heading);
         for (int extension = 0; extension < capacity; extension++) {
-            VisionPose current = outbound.get(outbound.size() - 1);
-            ArrayList<Pollen> seeds = new ArrayList<>();
-            for (Pollen pollen : all) {
-                if (selected.contains(pollen.id) || pollen.confidence < params.minConfidence) continue;
-                VisionPose anchor = new VisionPose(pollen.position.x - params.intakeForwardOffsetIn * c,
-                        pollen.position.y - params.intakeForwardOffsetIn * s, start.heading);
-                if (params.field.is_clear(anchor)) seeds.add(pollen);
-            }
-            seeds.sort(Comparator.comparingDouble((Pollen pollen) -> Math.hypot(
-                    pollen.position.x - params.intakeForwardOffsetIn * c - current.x,
-                    pollen.position.y - params.intakeForwardOffsetIn * s - current.y)).thenComparingInt(p -> p.id));
+            List<Prefix> extensions = extend_prefix(all, outbound, selected, start, depot, params, budgetS);
             Candidate chosen = null;
             ArrayList<VisionPose> chosenOutbound = null;
-            int feasibleSeeds = 0;
-            for (int seedIndex = 0; seedIndex < seeds.size() && feasibleSeeds < cap; seedIndex++) {
-                Pollen seed = seeds.get(seedIndex);
-                VisionPose anchor = new VisionPose(seed.position.x - params.intakeForwardOffsetIn * c,
-                        seed.position.y - params.intakeForwardOffsetIn * s, start.heading);
-                ButineField.Route extensionRoute = params.field.route(current, anchor);
-                if (extensionRoute == null) continue;
-                ArrayList<VisionPose> trial = new ArrayList<>(outbound);
-                for (int point = 0; point < extensionRoute.point_count(); point++) {
-                    VisionPose waypoint = extensionRoute.point(point);
-                    trial.add(new VisionPose(waypoint.x, waypoint.y, start.heading));
-                }
-                List<Contact> contacts = contacts(trial, all, params, start.heading);
-                // Reject the entire pass, including simultaneous fifth contacts; never silently discard extras.
-                if (contacts.size() > capacity || contacts.size() <= selected.size()) continue;
-                ExtendedPass extended = overshoot_pass(trial, contacts, all, params, start.heading, capacity, selected.size());
-                if (extended == null) continue;
-                ArrayList<VisionPose> shortened = extended.points;
-                contacts = extended.contacts;
-                Route route = finish(shortened, contacts, depot, params, start.heading);
-                if (route == null || route.timeS + Math.max(0, params.scoreOverheadS) > budgetS + EPSILON) continue;
-                double totalDistance = 0;
-                for (int i = 0; i < route.segment_count(); i++) totalDistance += route.waypoint(i).distance_to(route.waypoint(i + 1));
-                if (totalDistance <= EPSILON) continue;
-                feasibleSeeds++;
-                Candidate candidate = new Candidate(route, contacts);
+            for (Prefix trial : extensions) {
+                Candidate candidate = trial.candidate;
                 if (chosen == null || candidate.ids.length > chosen.ids.length
-                        || (candidate.ids.length == chosen.ids.length && route.timeS < chosen.route.timeS - EPSILON)) {
+                        || (candidate.ids.length == chosen.ids.length && candidate.route.timeS < chosen.route.timeS - EPSILON)) {
                     chosen = candidate;
-                    chosenOutbound = shortened;
+                    chosenOutbound = trial.outbound;
                 }
             }
             if (chosen == null) break;
@@ -226,6 +310,55 @@ public final class ButineIntake {
             if (selected.size() == capacity) break;
         }
         return best;
+    }
+
+    private static List<Prefix> extend_prefix(List<Pollen> all, ArrayList<VisionPose> outbound,
+                                               HashSet<Integer> selected, VisionPose start, VisionPose depot,
+                                               Butine.Params params, double budgetS) {
+        ArrayList<Prefix> extensions = new ArrayList<>();
+        int capacity = Math.min(Butine.POSSESSION_LIMIT, Math.max(1, params.capacity));
+        int cap = Math.max(1, Math.min(Butine.MAX_CANDIDATES, params.candidateCap));
+        double c = Math.cos(start.heading), s = Math.sin(start.heading);
+        VisionPose current = outbound.get(outbound.size() - 1);
+        ArrayList<Pollen> seeds = new ArrayList<>();
+        for (Pollen pollen : all) {
+            if (selected.contains(pollen.id) || pollen.confidence < params.minConfidence) continue;
+            VisionPose anchor = new VisionPose(pollen.position.x - params.intakeForwardOffsetIn * c,
+                    pollen.position.y - params.intakeForwardOffsetIn * s, start.heading);
+            if (params.field.is_clear(anchor)) seeds.add(pollen);
+        }
+        seeds.sort(Comparator.comparingDouble((Pollen pollen) -> Math.hypot(
+                pollen.position.x - params.intakeForwardOffsetIn * c - current.x,
+                pollen.position.y - params.intakeForwardOffsetIn * s - current.y)).thenComparingInt(p -> p.id));
+        int feasibleSeeds = 0;
+        for (int seedIndex = 0; seedIndex < seeds.size() && feasibleSeeds < cap; seedIndex++) {
+            Pollen seed = seeds.get(seedIndex);
+            VisionPose anchor = new VisionPose(seed.position.x - params.intakeForwardOffsetIn * c,
+                    seed.position.y - params.intakeForwardOffsetIn * s, start.heading);
+            ButineField.Route extensionRoute = params.field.route(current, anchor);
+            if (extensionRoute == null) continue;
+            ArrayList<VisionPose> trial = new ArrayList<>(outbound);
+            for (int point = 0; point < extensionRoute.point_count(); point++) {
+                VisionPose waypoint = extensionRoute.point(point);
+                trial.add(new VisionPose(waypoint.x, waypoint.y, start.heading));
+            }
+            List<Contact> contacts = contacts(trial, all, params, start.heading);
+            // Reject the entire pass, including simultaneous fifth contacts; never silently discard extras.
+            if (contacts.size() > capacity || contacts.size() <= selected.size()) continue;
+            ExtendedPass extended = overshoot_pass(trial, contacts, all, params, start.heading, capacity, selected.size());
+            if (extended == null) continue;
+            ArrayList<VisionPose> shortened = extended.points;
+            contacts = extended.contacts;
+            Route route = finish(shortened, contacts, depot, params, start.heading);
+            if (route == null || route.timeS + Math.max(0, params.scoreOverheadS) > budgetS + EPSILON) continue;
+            double totalDistance = 0;
+            for (int i = 0; i < route.segment_count(); i++) totalDistance += route.waypoint(i).distance_to(route.waypoint(i + 1));
+            if (totalDistance <= EPSILON) continue;
+            feasibleSeeds++;
+            Candidate candidate = new Candidate(route, contacts);
+            extensions.add(new Prefix(shortened, candidate));
+        }
+        return extensions;
     }
 
     private static final class ExtendedPass {

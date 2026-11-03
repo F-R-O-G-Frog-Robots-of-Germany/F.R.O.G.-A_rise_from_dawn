@@ -55,6 +55,10 @@ public final class Butine {
         /** Free-plane calibration permits unbounded tours; physical-field routes carry at most four. */
         public int capacity = POSSESSION_LIMIT;
         public int lookaheadRuns = 2;
+        /** Switch physical collection to one-run greedy selection at this elapsed autonomous time. */
+        public double greedyAtS = 25.0;
+        /** Snapshot supplied by the caller's existing autonomous timer; never inferred from remainingS. */
+        public double elapsedAutoS = 0.0;
         public double discount = 1.0;
         public double remainingS = 30.0;
         public double scoreOverheadS = 2.0;
@@ -79,6 +83,8 @@ public final class Butine {
         public Params(Params source) {
             capacity = source.capacity;
             lookaheadRuns = source.lookaheadRuns;
+            greedyAtS = source.greedyAtS;
+            elapsedAutoS = source.elapsedAutoS;
             discount = source.discount;
             remainingS = source.remainingS;
             scoreOverheadS = source.scoreOverheadS;
@@ -150,6 +156,8 @@ public final class Butine {
         public final double solveUs;
         public final int iterations;
         public final boolean uncapacitated;
+        /** Physical collection evaluates at most the current run and one advisory future run. */
+        public final int planningHorizonRuns;
 
         private Plan(Context ctx, Run[] runs, int fittingRuns, int expectedCollected,
                      double committedTimeS, double objective, int iterations, boolean uncapacitated) {
@@ -167,6 +175,8 @@ public final class Butine {
             solveUs = (System.nanoTime() - ctx.startedNs) / 1000.0;
             this.iterations = iterations;
             this.uncapacitated = uncapacitated;
+            planningHorizonRuns = ctx.params.sweepIntake && !ctx.params.field.is_unrestricted()
+                    ? sweep_horizon(ctx.params) : clamp(ctx.params.lookaheadRuns, 1, MAX_RUNS);
         }
     }
 
@@ -393,29 +403,56 @@ public final class Butine {
             return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, false);
         }
         ctx.count = Math.min(seeds, clamp(ctx.params.candidateCap, 1, MAX_CANDIDATES));
-        ArrayList<Run> runs = new ArrayList<>();
-        VisionPose start = ctx.start;
-        double committed = 0, objective = 0;
-        int collected = 0;
-        int horizon = clamp(ctx.params.lookaheadRuns, 1, MAX_RUNS);
-        for (int r = 0; r < horizon && !available.isEmpty(); r++) {
-            double remaining = Math.max(0, ctx.params.remainingS - committed);
-            if (remaining <= 0) break;
-            ButineIntake.Candidate candidate = ButineIntake.plan_run(available, start, ctx.depot, ctx.params, remaining);
-            if (candidate == null || candidate.ids.length == 0) break;
-            Run run = new Run(candidate.ids, candidate.poses, candidate.route.timeS, true, candidate.route);
-            runs.add(run);
-            double seconds = run.timeS + Math.max(0, ctx.params.scoreOverheadS);
-            committed += seconds;
-            objective += Math.pow(clamp(ctx.params.discount, 0, 1), r) * seconds;
-            collected += run.count;
-            HashSet<Integer> removed = new HashSet<>();
-            for (int id : run.ids) removed.add(id);
-            available.removeIf(item -> removed.contains(item.id));
-            start = ctx.depot;
+        int horizon = sweep_horizon(ctx.params);
+        List<ButineIntake.Candidate> firstCandidates = new ArrayList<>();
+        if (ctx.params.remainingS > 0) {
+            if (horizon == 1) {
+                ButineIntake.Candidate greedy = ButineIntake.plan_run(
+                        available, ctx.start, ctx.depot, ctx.params, ctx.params.remainingS);
+                if (greedy != null) firstCandidates.add(greedy);
+            } else firstCandidates = ButineIntake.plan_candidates(
+                    available, ctx.start, ctx.depot, ctx.params, ctx.params.remainingS);
         }
-        if (runs.isEmpty()) ctx.rejectionReason = "no capacity-safe front-intake sweep fits the remaining time";
-        return new Plan(ctx, runs.toArray(new Run[0]), runs.size(), collected, committed, objective, 0, false);
+        ButineIntake.Candidate bestFirst = null, bestSecond = null;
+        int bestCollected = -1;
+        double bestTime = Double.POSITIVE_INFINITY;
+        double overhead = Math.max(0, ctx.params.scoreOverheadS);
+        for (ButineIntake.Candidate first : firstCandidates) {
+            double totalTime = first.route.timeS + overhead;
+            ButineIntake.Candidate second = null;
+            if (horizon == 2) {
+                HashSet<Integer> removed = new HashSet<>();
+                for (int id : first.ids) removed.add(id);
+                ArrayList<Pollen> remainder = new ArrayList<>();
+                for (Pollen item : available) if (!removed.contains(item.id)) remainder.add(item);
+                double remaining = Math.max(0, ctx.params.remainingS - totalTime);
+                if (!remainder.isEmpty() && remaining > 0) second = ButineIntake.plan_run(
+                        remainder, ctx.depot, ctx.depot, ctx.params, remaining);
+                if (second != null) totalTime += second.route.timeS + overhead;
+            }
+            int collected = first.ids.length + (second == null ? 0 : second.ids.length);
+            if (bestFirst == null || collected > bestCollected
+                    || (collected == bestCollected && first.ids.length > bestFirst.ids.length)
+                    || (collected == bestCollected && first.ids.length == bestFirst.ids.length
+                    && totalTime < bestTime - EPSILON)) {
+                bestFirst = first; bestSecond = second;
+                bestCollected = collected; bestTime = totalTime;
+            }
+        }
+        if (bestFirst == null) {
+            ctx.rejectionReason = "no capacity-safe front-intake sweep fits the remaining time";
+            return new Plan(ctx, new Run[0], 0, 0, 0, 0, 0, false);
+        }
+        Run first = new Run(bestFirst.ids, bestFirst.poses, bestFirst.route.timeS, true, bestFirst.route);
+        Run[] runs = bestSecond == null ? new Run[]{first} : new Run[]{first,
+                new Run(bestSecond.ids, bestSecond.poses, bestSecond.route.timeS, true, bestSecond.route)};
+        double objective = first.timeS + overhead;
+        if (bestSecond != null) objective += clamp(ctx.params.discount, 0, 1) * (bestSecond.route.timeS + overhead);
+        return new Plan(ctx, runs, runs.length, bestCollected, bestTime, objective, 0, false);
+    }
+
+    private static int sweep_horizon(Params params) {
+        return params.elapsedAutoS >= params.greedyAtS ? 1 : clamp(params.lookaheadRuns, 1, 2);
     }
 
     private static double coupled_time(double straight, double direction, double incoming, Kinematics k) {
@@ -452,9 +489,10 @@ public final class Butine {
     }
 
     private static void validate(Params p) {
-        double[] finite = {p.discount, p.remainingS, p.scoreOverheadS, p.minConfidence,
+        double[] finite = {p.discount, p.remainingS, p.scoreOverheadS, p.minConfidence, p.greedyAtS, p.elapsedAutoS,
                 p.intakeWidthIn, p.intakeForwardOffsetIn, p.intakeOvershootIn, p.pollenRadiusIn};
         for (double value : finite) if (!Double.isFinite(value)) throw new IllegalArgumentException("Nonfinite planner setting");
+        if (p.greedyAtS < 0 || p.elapsedAutoS < 0) throw new IllegalArgumentException("Nonnegative autonomous timer settings required");
         validate_kinematics(p.kinematics);
         Objects.requireNonNull(p.field, "field");
         if (p.intakeWidthIn <= 0 || p.intakeForwardOffsetIn < 0 || p.intakeOvershootIn < 0 || p.pollenRadiusIn <= 0)
