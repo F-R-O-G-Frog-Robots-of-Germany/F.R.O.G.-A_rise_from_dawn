@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Partner Auto Import</title>
+  <style>
+    :root { color-scheme: dark light; --bg:#10151d; --panel:#19212c; --text:#e5edf6; --muted:#a5b4c7; --line:#344255; --accent:#82d4b8; --warn:#f0cb7c; --error:#f59b9b; }
+    @media(prefers-color-scheme:light) { :root { --bg:#f4f6f8; --panel:#fff; --text:#172638; --muted:#53657b; --line:#cbd5df; --accent:#126d54; --warn:#815500; --error:#a32929; } }
+    * { box-sizing:border-box; } body { margin:0; font:15px/1.5 system-ui,sans-serif; background:var(--bg); color:var(--text); }
+    header,main { max-width:1440px; margin:auto; padding:24px; } header { padding-bottom:8px; } h1 { font-size:25px; margin:0; font-weight:600; } h2 { font-size:18px; margin:0 0 12px; } p { margin:6px 0 14px; }
+    .muted,small { color:var(--muted); } .layout { display:grid; grid-template-columns:minmax(300px,430px) minmax(360px,1fr); gap:22px; align-items:start; }
+    section { background:var(--panel); padding:20px; border-radius:12px; margin-bottom:18px; } label { display:block; margin:10px 0 5px; } input,select,textarea,button { font:inherit; }
+    button,.file-button { display:inline-block; background:var(--panel); color:var(--text); border:1px solid var(--line); padding:9px 13px; border-radius:7px; cursor:pointer; text-align:center; }
+    button:hover,.file-button:hover { border-color:var(--accent); } button:disabled { opacity:.5; cursor:default; } button.primary { background:var(--accent); color:var(--bg); border-color:var(--accent); font-weight:600; }
+    input[type=number],input[type=text],select,textarea { width:100%; padding:9px; color:var(--text); background:var(--bg); border:1px solid var(--line); border-radius:6px; }
+    textarea { resize:vertical; min-height:210px; font:12px/1.5 ui-monospace,Consolas,monospace; } .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; } .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 12px; }
+    .file-button input { display:none; } .file-button:focus-within { outline:2px solid var(--accent); outline-offset:2px; } details { margin-top:16px; } summary { cursor:pointer; padding:7px 0; }
+    #sources { overflow-wrap:anywhere; max-height:180px; overflow:auto; margin:10px 0; } #sources div { font-size:12px; padding:2px 0; } #sources button { padding:1px 6px; margin-left:8px; }
+    #status { font-weight:600; color:var(--accent); } #error { color:var(--error); white-space:pre-wrap; } .diagnostic { padding:8px 0; border-top:1px solid var(--line); overflow-wrap:anywhere; } .diagnostic.error { color:var(--error); } .diagnostic.warning { color:var(--warn); }
+    #field { width:100%; aspect-ratio:1.15; display:block; } .legend span { display:inline-block; margin-right:18px; } .swatch { display:inline-block; width:20px; height:4px; margin-right:6px; vertical-align:middle; background:var(--accent); } .swatch.occupied { height:12px; background:var(--warn); opacity:.45; }
+    .scroll { overflow:auto; max-height:430px; } table { width:100%; border-collapse:collapse; font-size:13px; } th,td { text-align:left; padding:9px 6px; border-bottom:1px solid var(--line); vertical-align:top; } td:last-child { overflow-wrap:anywhere; }
+    pre { white-space:pre-wrap; overflow-wrap:anywhere; font:12px/1.5 ui-monospace,Consolas,monospace; } #clock { width:100%; accent-color:var(--accent); } .tip { font-size:13px; color:var(--muted); } .empty { padding:50px 10px; text-align:center; color:var(--muted); }
+    a { color:var(--accent); } footer { color:var(--muted); font-size:12px; padding:0 24px 24px; max-width:1440px; margin:auto; }
+    @media(max-width:850px) { .layout { grid-template-columns:1fr; } header,main { padding:16px; } section { padding:16px; } }
+  </style>
+</head>
+<body>
+<header><h1>Partner Auto Import</h1><p class="muted">Paste Java or open a Pedro .pp project. Review the route, waits and estimated occupied space before exporting. No internet connection is used; Wi-Fi may stay connected.</p></header>
+<main class="layout">
+  <div>
+    <section>
+      <h2>Partner source</h2>
+      <div class="row">
+        <label class="file-button">Open files<input id="files" type="file" accept=".java,.pp,.json" multiple></label>
+        <label class="file-button">Open Java folder<input id="folder" type="file" webkitdirectory multiple></label>
+        <button id="clear" type="button">Clear</button>
+      </div>
+      <div id="sources" aria-live="polite"></div>
+      <label for="paste">Or paste source</label>
+      <textarea id="paste" spellcheck="false" placeholder="Paste the autonomous Java class or .pp JSON here. Add parent/helper classes with more pastes, or open their source folder."></textarea>
+      <div class="row"><button id="add" type="button">Save pasted source</button><button id="new-paste" type="button">New pasted source</button></div>
+      <p id="paste-note" class="tip">Pasted source stays in the editor, including when an import fails.</p>
+      <div class="grid">
+        <div><label for="format">Format</label><select id="format"><option value="auto">Detect automatically</option value="java">Java source</option><option value="pp">Pedro .pp</option></select></div>
+        <div><label for="entry">Autonomous</label><select id="entry"><option value="">Detect from source</option></select></div>
+      </div>
+      <details>
+        <summary>Body and timing model</summary>
+        <p class="tip">These are provisional model values in inches and seconds. Source-defined waits are retained; model travel times are estimates.</p>
+        <div class="grid" id="settings">
+          <div><label for="field_size_in">Field size (in)</label><input id="field_size_in" type="number" value="144" min="1" step="0.1"></div>
+          <div><label for="speed_in_s">Cruise speed (in/s)</label><input id="speed_in_s" type="number" value="30" min="0.1" step="1"></div>
+          <div><label for="robot_length_in">Robot length (in)</label><input id="robot_length_in" type="number" value="18" min="0.1" step="0.5"></div>
+          <div><label for="robot_width_in">Robot width (in)</label><input id="robot_width_in" type="number" value="18" min="0.1" step="0.5"></div>
+          <div><label for="acceleration_in_s2">Acceleration (in/s²)</label><input id="acceleration_in_s2" type="number" value="40" min="0.1" step="1"></div>
+          <div><label for="turn_rate_rad_s">Turn rate (rad/s)</label><input id="turn_rate_rad_s" type="number" value="3.14159265" min="0.01" step="0.1"></div>
+          <div><label for="clearance_in">Extra clearance (in)</label><input id="clearance_in" type="number" value="2" min="0" step="0.5"></div>
+          <div><label for="timing_uncertainty_s">Timing allowance ± (s)</label><input id="timing_uncertainty_s" type="number" value="0.5" min="0" step="0.1"></div>
+          <div><label for="start_delay_s">Start delay (s)</label><input id="start_delay_s" type="number" value="0" min="0" step="0.25"></div>
+          <div><label for="auto_duration_s">AUTO duration (s)</label><input id="auto_duration_s" type="number" value="30" min="1" max="300" step="1"></div>
+        </div>
+      </details>
+      <div class="row" style="margin-top:18px"><button id="import" type="button" class="primary">Import and review</button><button id="export" type="button" disabled>Export partner JSON</button></div>
+      <label for="profile-name">Export name</label><input id="profile-name" type="text" value="partner-auto" maxlength="100">
+      <p id="error" role="alert"></p>
+    </section>
+    <section><h2>Import findings</h2><div id="diagnostics" class="tip">Inherited source and unsupported actions will be identified here.</div></section>
+  </div>
+  <div>
+    <section>
+      <div class="row" style="justify-content:space-between"><h2>Route and occupancy</h2><span id="status" role="status" aria-live="polite">No source imported</span></div>
+      <p id="summary" class="tip">The profile is for offline planning. It is not a live partner-position feed.</p>
+      <svg id="field" role="img" aria-label="Imported autonomous route and conservative partner occupancy"></svg>
+      <div class="legend tip"><span><i class="swatch"></i>Declared route</span><span><i class="swatch occupied"></i>Possible occupied region</span></div>
+      <label for="clock">AUTO time: <output id="time">0.0 s</output></label><input id="clock" type="range" min="0" max="30" value="0" step="0.1">
+      <p class="tip">The occupied region includes the body, model clearance and timing bounds. Unknown behavior remains unresolved; a scheduled departure does not prove actual clearance.</p>
+    </section>
+    <section><h2>Extracted actions</h2><div class="scroll"><table><thead><tr><th>Action</th><th>Duration / timing</th><th>Source</th></tr></thead><tbody id="actions"><tr><td colspan="3" class="empty">Add source and select Import and review.</td></tr></tbody></table></div>
+      <details><summary>Normalized profile</summary><pre id="json"></pre></details>
+    </section>
+  </div>
+</main>
+<footer>Runs on this computer. Imported Java is parsed, not executed. Profiles do not enable or modify competition robot code. <button id="stop" type="button">Stop local importer</button></footer>
+<script>
+(() => {
+  'use strict';
+  const token = '__IMPORT_TOKEN__';
+  const el = id => document.getElementById(id);
+  const sources = new Map(); let profile = null; let pasteCount = 0; let editorSource = null;
+  const draftKey = 'partner-auto-draft-v1';
+  const svgNS = 'http://www.w3.org/2000/svg';
+  function node(tag, attributes = {}, text = '') { const n = document.createElementNS(svgNS, tag); for (const [k,v] of Object.entries(attributes)) n.setAttribute(k, v); if (text) n.textContent = text; return n; }
+  function saveDraft() {
+    try { const settings={}; for(const input of el('settings').querySelectorAll('input')) settings[input.id]=input.value; localStorage.setItem(draftKey,JSON.stringify({sources:[...sources],paste:el('paste').value,editorSource,pasteCount,format:el('format').value,entry:el('entry').value,name:el('profile-name').value,settings})); }
+    catch { el('paste-note').textContent='Source is kept in this tab. Browser draft storage is unavailable; copy it before closing the tab.'; }
+  }
+  function changed() { profile = null; el('export').disabled = true; el('status').textContent = 'Source or model changed · import again'; el('json').textContent=''; el('actions').replaceChildren(); el('summary').textContent='Import again to update the route and timing model.'; draw(); saveDraft(); }
+  function listSources() {
+    el('sources').replaceChildren();
+    for (const name of sources.keys()) { const line = document.createElement('div'); line.textContent = name; const edit=document.createElement('button'); edit.type='button'; edit.textContent='Edit'; edit.addEventListener('click',()=>{if(el('paste').value.trim()) addPaste(); editorSource=name; el('paste').value=sources.get(name); el('paste-note').textContent=`Editing ${name}. Source is retained on errors.`; changed();}); const remove = document.createElement('button'); remove.type = 'button'; remove.textContent = 'Remove'; remove.addEventListener('click', () => { sources.delete(name); if(editorSource===name) editorSource=null; listSources(); changed(); }); line.append(edit,remove); el('sources').append(line); }
+  }
+  async function addFiles(files) {
+    try { for (const file of files) { if (!/\.(java|pp|json)$/i.test(file.name)) continue; if (file.size > 24*1024*1024) throw new Error('Source file exceeds 24 MB.'); const name=file.webkitRelativePath || file.name; const text=await file.text(); if(sources.has(name) && sources.get(name)!==text) throw new Error(`Two different files are named ${name}. Open their parent folder or remove the old file first.`); sources.set(name,text); } listSources(); changed(); el('error').textContent = ''; }
+    catch (error) { el('error').textContent = error.message; }
+  }
+  el('files').addEventListener('change', event => addFiles(event.target.files));
+  el('folder').addEventListener('change', event => addFiles(event.target.files));
+  function addPaste() { const value = el('paste').value; if (!value.trim()) return false; let name = editorSource && sources.has(editorSource) ? editorSource : null; if(!name) do { name=`Pasted${++pasteCount}.${value.trimStart().startsWith('{') ? 'pp' : 'java'}`; } while(sources.has(name)); sources.set(name, value); editorSource=name; el('paste-note').textContent=`Saved ${name}; source remains in the editor.`; listSources(); changed(); return true; }
+  el('add').addEventListener('click', addPaste);
+  el('new-paste').addEventListener('click',()=>{addPaste();editorSource=null;el('paste').value='';el('paste-note').textContent='Previous source is saved above. Paste another file, or paste several complete Java files together.';changed();el('paste').focus();});
+  el('clear').addEventListener('click', () => { sources.clear(); editorSource=null; el('paste').value = ''; el('entry').replaceChildren(new Option('Detect from source','')); el('diagnostics').textContent = ''; el('actions').replaceChildren(); el('json').textContent = ''; listSources(); changed(); draw(); });
+  el('settings').addEventListener('input', changed); el('format').addEventListener('change', changed); el('entry').addEventListener('change', changed);
+  el('paste').addEventListener('input', changed); el('profile-name').addEventListener('input',saveDraft);
+  function flatten(actions, depth=0) { const out=[]; for (const action of actions || []) { out.push({...action,depth}); if (action.children) out.push(...flatten(action.children,depth+1)); for (const branch of action.branches || []) out.push(...flatten(branch.actions,depth+1)); } return out; }
+  function durationText(action) { const number=v=>Number(v).toFixed(2); if('start_min_s' in action) { const range=(lo,hi)=>hi==null ? number(lo)+'–?' : Math.abs(lo-hi)<1e-8 ? number(lo) : number(lo)+'–'+number(hi); return `${range(action.start_min_s,action.start_max_s)} → ${range(action.end_min_s,action.end_max_s)} s · ${action.timing_basis || 'unknown'}`; } const d = action.duration; if (!d) return action.kind === 'move' || action.kind === 'turn' ? 'Motion-model estimate' : 'See timing profile'; const min=d.min_s ?? 0; return `${number(min)}${d.max_s == null ? '–?':d.max_s !== min ? '–'+number(d.max_s):''} s · ${d.basis || 'unknown'}`; }
+  function show(result) {
+    profile = result;
+    el('status').textContent = ({complete:'Extracted · model timing',incomplete:'Incomplete · review findings',invalid:'Invalid source',selection_required:'Choose an autonomous'})[result.status] || result.status;
+    el('export').disabled = result.status === 'invalid' || result.status === 'selection_required';
+    el('diagnostics').replaceChildren();
+    for (const d of result.diagnostics || []) { const item=document.createElement('div'); item.className='diagnostic '+d.severity; item.textContent=`${d.severity || 'info'} · ${d.message}${d.source ? ' ('+d.source.file+(d.source.line ? ':'+d.source.line:'')+')':''}`; el('diagnostics').append(item); }
+    if (!(result.diagnostics || []).length) el('diagnostics').textContent='No extraction findings. Motion timing is still a model estimate.';
+    el('actions').replaceChildren();
+    const actions=result.timeline?.length ? result.timeline : flatten(result.actions);
+    for (const action of actions) { const tr=document.createElement('tr'); const type=document.createElement('td'); type.textContent='  '.repeat(action.depth || 0)+(action.kind || 'unknown')+(action.label ? ' · '+action.label:''); const duration=document.createElement('td'); duration.textContent=durationText(action); const source=document.createElement('td'); source.textContent=action.source ? action.source.file+(action.source.line ? ':'+action.source.line:'') : ''; tr.append(type,duration,source); el('actions').append(tr); }
+    el('summary').textContent=`${actions.length} extracted actions · ${(result.reservations || []).length} occupancy intervals. Timing bounds are estimates and declared conditions, not measured partner positions.`;
+    el('json').textContent=JSON.stringify(result,null,2);
+    el('clock').max=String(result.settings?.auto_duration_s || 30);
+    draw();
+  }
+  function pointAt(points,t) { let p=points.map(p=>[...p]); while(p.length>1) p=p.slice(0,-1).map((a,i)=>[a[0]*(1-t)+p[i+1][0]*t,a[1]*(1-t)+p[i+1][1]*t]); return p[0]; }
+  function pathSamples(path) { if(path.segments?.length) return path.segments.flatMap(segment=>pathSamples(segment)); const points=path.points; if(!points?.length || !points.every(p=>p.length>=2 && p.every(Number.isFinite))) return []; return path.kind==='polyline' ? points : Array.from({length:65},(_,i)=>pointAt(points,i/64)); }
+  function draw() {
+    const svg=el('field'); svg.replaceChildren(); const size=profile?.settings?.field_size_in || Number(el('field_size_in').value) || 144; const pad=12; svg.setAttribute('viewBox', `${-pad} ${-pad} ${size+pad*2} ${size+pad*2}`);
+    for(let v=0;v<=size;v+=24) { svg.append(node('line',{x1:v,y1:0,x2:v,y2:size,stroke:'var(--line)','stroke-width':.35})); svg.append(node('line',{x1:0,y1:v,x2:size,y2:v,stroke:'var(--line)','stroke-width':.35})); }
+    svg.append(node('rect',{x:0,y:0,width:size,height:size,fill:'none',stroke:'var(--muted)','stroke-width':.65}));
+    svg.append(node('text',{x:0,y:size+8,fill:'var(--muted)','font-size':4},'0')); svg.append(node('text',{x:size-15,y:size+8,fill:'var(--muted)','font-size':4},`${size} in`));
+    const time=Number(el('clock').value); el('time').textContent=time.toFixed(1)+' s';
+    for(const r of profile?.reservations || []) { const start=r.window_start_s ?? r.start_min_s ?? r.start_s ?? 0; const end=r.window_end_s ?? r.end_max_s ?? profile.settings.auto_duration_s; if(time<start || time>end) continue; const b=r.bounds; if(!b) continue; if(![b.min_x,b.min_y,b.max_x,b.max_y].every(Number.isFinite)) continue; svg.append(node('rect',{x:b.min_x,y:size-b.max_y,width:b.max_x-b.min_x,height:b.max_y-b.min_y,fill:'var(--warn)',opacity:.18})); }
+    for(const action of flatten(profile?.actions)) { if(!action.path) continue; const sampled=pathSamples(action.path); if(!sampled.length) continue; svg.append(node('polyline',{points:sampled.map(p=>`${p[0]},${size-p[1]}`).join(' '),fill:'none',stroke:'var(--accent)','stroke-width':.8})); }
+    const p=profile?.start_pose; if(p && Number.isFinite(p.x) && Number.isFinite(p.y)) { svg.append(node('circle',{cx:p.x,cy:size-p.y,r:1.5,fill:'var(--accent)'})); svg.append(node('text',{x:p.x+2,y:size-p.y-2,fill:'var(--text)','font-size':4},'Start')); }
+  }
+  el('clock').addEventListener('input',draw);
+  el('import').addEventListener('click', async () => {
+    if(el('paste').value.trim()) addPaste();
+    const button=el('import'); button.disabled=true; button.textContent='Reading source…'; el('error').textContent='';
+    try {
+      if(location.protocol!=='http:' || !['127.0.0.1','localhost'].includes(location.hostname)) throw new Error('Open launch.bat to start Python on this computer, then use the window it opens. Internet and Wi-Fi are not required. Your pasted source is kept here.');
+      const settings={}; for(const input of el('settings').querySelectorAll('input')) settings[input.id]=Number(input.value);
+      let response;
+      try { response=await fetch('/api/import',{method:'POST',mode:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json','X-Import-Token':token},body:JSON.stringify({format:el('format').value, sources:Object.fromEntries(sources), entry:el('entry').value || null, settings})}); }
+      catch { throw new Error('Cannot reach Python on this computer. Open launch.bat again and retry in its window. Wi-Fi can stay connected; no internet is used. Your pasted source has been kept.'); }
+      let result;
+      try { result=await response.json(); } catch { throw new Error('The local Python service did not return a readable import result. Reopen launch.bat and retry. Your pasted source has been kept.'); }
+      if(response.status===403) throw new Error('This local importer session has expired. Reopen launch.bat and use its window. Your pasted source has been kept.');
+      if(!response.ok) throw new Error(result.error || 'Import failed.');
+      const previous=el('entry').value; el('entry').replaceChildren(new Option('Select autonomous',''));
+      for(const entry of result.entries || []) { const name=typeof entry === 'string' ? entry : entry.qualified_name || entry.name; el('entry').add(new Option(name,name)); }
+      el('entry').value=result.selected_entry || previous; show(result);
+    } catch(error) { el('error').textContent=error.message; el('status').textContent='Import failed'; profile=null; el('export').disabled=true; }
+    finally { button.disabled=false; button.textContent='Import and review'; saveDraft(); }
+  });
+  el('export').addEventListener('click', () => { if(!profile) return; const blob=new Blob([JSON.stringify(profile,null,2)+'\n'],{type:'application/json'}); const link=document.createElement('a'); link.href=URL.createObjectURL(blob); link.download=(el('profile-name').value.replace(/[^a-zA-Z0-9_.-]/g,'-') || 'partner-auto')+'.json'; link.click(); setTimeout(()=>URL.revokeObjectURL(link.href),1000); });
+  el('stop').addEventListener('click',async()=>{saveDraft();try{const response=await fetch('/api/shutdown',{method:'POST',headers:{'X-Import-Token':token}});if(!response.ok)throw new Error();el('status').textContent='Local importer stopped';el('error').textContent='Source is saved. Reopen launch.bat to continue.';el('import').disabled=true;}catch{el('error').textContent='The local service is already unavailable. Source is kept; reopen launch.bat to continue.';}});
+  try { const saved=JSON.parse(localStorage.getItem(draftKey)||'null'); if(saved && Array.isArray(saved.sources) && saved.sources.length<=1000) { for(const pair of saved.sources) if(Array.isArray(pair) && pair.length===2 && pair.every(v=>typeof v==='string')) sources.set(...pair); el('paste').value=typeof saved.paste==='string' ? saved.paste : ''; editorSource=sources.has(saved.editorSource) ? saved.editorSource : null; pasteCount=Number.isInteger(saved.pasteCount)&&saved.pasteCount>=0 ? saved.pasteCount : sources.size; if(['auto','java','pp'].includes(saved.format)) el('format').value=saved.format; if(saved.entry){el('entry').add(new Option(saved.entry,saved.entry));el('entry').value=saved.entry;} if(typeof saved.name==='string') el('profile-name').value=saved.name; for(const input of el('settings').querySelectorAll('input')) if(saved.settings && typeof saved.settings[input.id]==='string') input.value=saved.settings[input.id]; listSources(); el('paste-note').textContent='Restored your previous source and draft.'; } } catch { /* A blocked/corrupt browser store never prevents a fresh import. */ }
+  draw();
+})();
+</script>
+</body>
+</html>
