@@ -250,6 +250,7 @@ public final class CompetitionLifecycleChecks {
             telemetry = no_op_telemetry();
         }
         @Override protected ControlThreadAffinity create_control_affinity() { return state.affinity(); }
+        @Override protected boolean optional_assistance_enabled() { return true; }
         @Override protected CompetitionWorkers create_workers() { return state.workers(); }
         @Override protected int control_core() { return 2; }
         @Override protected void initialize_hardware() {
@@ -285,6 +286,7 @@ public final class CompetitionLifecycleChecks {
             telemetry = no_op_telemetry();
         }
         @Override protected ControlThreadAffinity create_control_affinity() { return state.affinity(); }
+        @Override protected boolean optional_assistance_enabled() { return true; }
         @Override protected CompetitionWorkers create_workers() {
             state.planningRequested = planning_enabled();
             return state.workers();
@@ -324,6 +326,7 @@ public final class CompetitionLifecycleChecks {
 
     private static final class MainHarness extends Main {
         final CompetitionWorkers owner;
+        @Override protected boolean optional_assistance_enabled() { return true; }
         MainHarness() {
             State state = new State();
             TestLocalizer localizer = new TestLocalizer(state);

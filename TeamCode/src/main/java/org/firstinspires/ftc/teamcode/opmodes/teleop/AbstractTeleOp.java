@@ -61,9 +61,13 @@ public abstract class AbstractTeleOp extends LinearOpMode {
             controlAffinity = create_control_affinity();
             initialize_hardware();
             on_init();
-            workers = create_workers();
-            configure_workers(workers);
-            workers.start();
+            workers = null;
+            // Optional camera/planner code remains available, but competition does not launch it.
+            if (optional_assistance_enabled()) {
+                workers = create_workers();
+                configure_workers(workers);
+                workers.start();
+            }
             controlAffinity.bind(control_core());
 
             if (CompConfig.telemetry_enabled()) {
@@ -79,7 +83,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                 on_init_loop();
                 if (CompConfig.init_telemetry_enabled()) {
                     get_telemetry_manager().addData("Control affinity", controlAffinity.detail());
-                    workers.telemetry(get_telemetry_manager());
+                    if (workers != null) workers.telemetry(get_telemetry_manager());
                     get_telemetry_manager().update();
                 }
                 idle();
@@ -147,11 +151,12 @@ public abstract class AbstractTeleOp extends LinearOpMode {
         for (LynxModule hub : allHubs) hub.setBulkCachingMode(LynxModule.BulkCachingMode.AUTO);
         telemetryManager = telemetry;
         follower = Constants.create_follower(hardwareMap);
-        set_limelight_video_enabled(CompConfig.video_enabled());
+        if (optional_assistance_enabled()) set_limelight_video_enabled(CompConfig.video_enabled());
         initialize_starting_pose();
         robotState = RobotState.INIT;
     }
 
+    protected boolean optional_assistance_enabled() { return CompConfig.OPTIONAL_ASSISTANCE_ENABLED; }
     protected boolean vision_enabled() { return CompConfig.VISION_ENABLED; }
     protected boolean planning_enabled() { return false; }
     protected int control_core() { return CompConfig.CONTROL_CORE; }

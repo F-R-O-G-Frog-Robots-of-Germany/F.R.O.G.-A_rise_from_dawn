@@ -14,8 +14,11 @@ public final class CompConfig {
     /** Allow INIT selection telemetry in competition mode; false suppresses that exception. */
     public static final boolean INIT_TELEMETRY = true;
 
-    /** Optional camera worker; a missing camera leaves normal competition control available. */
-    public static final boolean VISION_ENABLED = true;
+    /** Keep all Butine/Limelight integration dormant until the team explicitly reconnects it. */
+    public static final boolean OPTIONAL_ASSISTANCE_ENABLED = false;
+
+    /** Camera polling is independently off while the team works without Limelight hardware. */
+    public static final boolean VISION_ENABLED = false;
 
     /** -1 retains Android placement until the future robot can establish a useful control CPU. */
     public static final int CONTROL_CORE = -1;
