@@ -87,5 +87,6 @@ public class OpponentFarMidPickupPark extends AbstractAuto {
                 MID_FLOWER_PICK_UP_CONTROL_2, MID_FLOWER_PICK_UP_CONTROL_3, MID_FLOWER_PICK_UP), MID_FLOWER_LOWER_AFTER_SECONDS);
 
         queue_path(constant_heading_path(PARK, MID_FLOWER_PICK_UP, PARK_CONTROL_1, PARK));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }

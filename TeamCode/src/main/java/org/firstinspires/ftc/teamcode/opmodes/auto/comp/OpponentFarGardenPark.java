@@ -89,5 +89,6 @@ public class OpponentFarGardenPark extends AbstractAuto {
                 SHOOT_FROM_GARDEN_CONTROL_2, SHOOT_IN_LOWER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_path(tangent_path(SHOOT_IN_LOWER_HIVE, PARK_CONTROL_1, PARK_CONTROL_2, PARK));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }

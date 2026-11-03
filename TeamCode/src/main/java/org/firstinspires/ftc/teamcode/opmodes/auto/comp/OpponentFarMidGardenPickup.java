@@ -97,5 +97,6 @@ public class OpponentFarMidGardenPickup extends AbstractAuto {
         // Finish holding the GARDEN load; this export has no return or park path.
         queue_intake_path(tangent_path(SHOOT_IN_LOWER_HIVE, GARDEN_PICK_UP_CONTROL_1,
                 GARDEN_PICK_UP_CONTROL_2, GARDEN_PICK_UP));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }

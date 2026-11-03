@@ -91,5 +91,6 @@ public class GardenFarMidPark extends AbstractAuto {
                 SHOOT_IN_LOWER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_path(tangent_path(SHOOT_IN_LOWER_HIVE, PARK_CONTROL_1, PARK_CONTROL_2, PARK));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }

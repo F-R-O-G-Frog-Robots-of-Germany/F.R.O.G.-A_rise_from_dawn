@@ -77,5 +77,6 @@ public class FarMidPark extends AbstractAuto {
                 SHOOT_FROM_MID_FLOWER_CONTROL_2, SHOOT_FROM_MID_FLOWER_CONTROL_3, SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_path(tangent_path(SHOOT_IN_UPPER_HIVE, PARK_CONTROL_1, PARK));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }

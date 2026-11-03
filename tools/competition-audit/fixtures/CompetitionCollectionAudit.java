@@ -50,7 +50,61 @@ public final class CompetitionCollectionAudit {
         complete_collection_sequence();
         complete_collection_sequence();
         sensor_loaded_returns_without_finishing_collection();
+        fresh_empty_map_parks_without_dependent_actions();
+        cancellation_never_takes_drive_back_for_parking();
+        busy_drive_refusal_does_not_preempt_its_owner();
         System.out.println("Competition collection integration checks passed: " + checks);
+    }
+
+    private static void busy_drive_refusal_does_not_preempt_its_owner() throws Exception {
+        Session session = new Session(false, false, ButineRunner.Reason.DRIVE_BUSY);
+        new Harness(session).runOpMode();
+        ButineRunner.Result result = session.workers.collection_result();
+        require(session.existingBusyDrive && session.stopsBeforeAdmission == 0,
+                "collection admission never stops an already occupied drive before refusing it");
+        require(result != null && result.outcome == ButineRunner.Outcome.REFUSED
+                        && result.reason == ButineRunner.Reason.DRIVE_BUSY,
+                "occupied Pedro drive has a typed refused result");
+        require(session.collectionPaths == 0 && session.nextPaths == 0 && session.parkPaths == 0
+                        && session.shots == 0,
+                "busy-drive refusal cannot replace its owner with collection, continuation or parking");
+    }
+
+    private static void cancellation_never_takes_drive_back_for_parking() throws Exception {
+        for (boolean manual : new boolean[] {true, false}) {
+            Session session = new Session(false, false, manual ? ButineRunner.Reason.MANUAL_OVERRIDE
+                    : ButineRunner.Reason.STOP_REQUESTED);
+            new Harness(session).runOpMode();
+            ButineRunner.Result result = session.workers.collection_result();
+            require(session.interrupted && result != null && result.outcome == ButineRunner.Outcome.CANCELLED
+                            && result.reason == session.interruption,
+                    "actual collection records the distinct cancellation cause: " + session.interruption);
+            require(session.collectionPaths == 1 && session.nextPaths == 0 && session.parkPaths == 0
+                            && session.shots == 0,
+                    "manual override or Driver Station STOP cannot dispatch dependent actions or fallback parking");
+            require(!session.intaking && !session.flowerDown && !session.shooting
+                            && !session.workers.owns_drive() && !session.workers.planner().has_owner(),
+                    "cancelled collection releases its drive and worker ownership");
+        }
+    }
+
+    private static void fresh_empty_map_parks_without_dependent_actions() throws Exception {
+        Session session = new Session(false, true);
+        new Harness(session).runOpMode();
+        ButineRunner.Result result = session.workers.collection_result();
+        require(session.startedReady && result != null && result.outcome == ButineRunner.Outcome.NO_TARGETS,
+                "fresh empty detector evidence produces NO_TARGETS, not unavailable vision or success");
+        require(session.collectionPaths == 0 && session.nextPaths == 0 && session.shots == 0,
+                "empty map dispatches no collection, dependent path or shot");
+        require(session.parkPaths == 1 && session.parkAt < 5,
+                "empty map hands off immediately to one checked live-position park");
+        require(session.finalPose != null && session.finalPose.distance(new Pose(19, 108, 0)) < 1e-6,
+                "real optional autonomous queue reaches the calculated loading-zone target");
+        require(!session.intaking && !session.flowerDown && !session.shooting,
+                "empty-map park preserves safe mechanism outputs");
+        require(!session.workers.vision().has_owner() && !session.workers.planner().has_owner()
+                        && session.workers.collection_result() == result,
+                "shutdown joins owners without erasing the empty-map result");
     }
 
     private static void sensor_loaded_returns_without_finishing_collection() throws Exception {
@@ -135,19 +189,34 @@ public final class CompetitionCollectionAudit {
         final long deadlineNanos = System.nanoTime() + 5_000_000_000L;
         final List<String> events = new ArrayList<>();
         final Device device = new Device();
-        final boolean loadMidRun;
+        final boolean loadMidRun, emptyMap;
+        final ButineRunner.Reason interruption;
+        boolean interrupted;
+        boolean existingBusyDrive;
+        int stopsBeforeAdmission;
         Harness opMode;
         CompetitionWorkers workers;
         boolean planningRequested, startedReady, intaking, flowerDown, shooting, wrongThread;
         int collectionPaths, nextPaths, localizerTicks, shooterTicks, planningTicks, pickupTicks,
                 returnTicks, nextTicks, shots, shooterStops, intakeStops, driveStops, powerWrites;
-        int sensorReturnPaths, loadedReads;
+        int sensorReturnPaths, loadedReads, parkPaths;
+        double parkAt;
+        Pose finalPose;
         boolean sensorLoaded;
         Pose loadedPose;
         boolean returning;
 
         Session() { this(false); }
-        Session(boolean loadMidRun) { this.loadMidRun = loadMidRun; }
+        Session(boolean loadMidRun) { this(loadMidRun, false); }
+        Session(boolean loadMidRun, boolean emptyMap) {
+            this(loadMidRun, emptyMap, null);
+        }
+        Session(boolean loadMidRun, boolean emptyMap, ButineRunner.Reason interruption) {
+            this.loadMidRun = loadMidRun;
+            this.emptyMap = emptyMap;
+            this.interruption = interruption;
+            if (emptyMap) device.result.detectors.clear();
+        }
 
         void on_control_thread() {
             wrongThread |= Thread.currentThread() != controlThread;
@@ -165,10 +234,16 @@ public final class CompetitionCollectionAudit {
                 else if (!returning) pickupTicks++;
                 else returnTicks++;
             } else if (nextPaths > 0) nextTicks++;
+            if (interruption != null && !interrupted && pickupTicks >= 2) {
+                interrupted = true;
+                if (interruption == ButineRunner.Reason.MANUAL_OVERRIDE) workers.cancel_drive();
+                else set(opMode, "stopRequested", true);
+            }
         }
     }
 
     private static final class Harness extends AbstractAuto {
+        @Override protected boolean optional_assistance_enabled() { return true; }
         final Session session;
         final SimulatedLocalizer simulatedLocalizer;
 
@@ -267,6 +342,7 @@ public final class CompetitionCollectionAudit {
             queue_collection(DEPOT, params, 0.6);
             queue_path(Paths.line(new Pose(DEPOT.x, DEPOT.y, DEPOT.heading), NEXT).linear(DEPOT.heading, NEXT.heading()));
             queue_shot(0.005);
+            if (session.emptyMap || session.interruption != null) queue_park();
         }
 
         @Override protected CompetitionWorkers create_workers() {
@@ -286,6 +362,8 @@ public final class CompetitionCollectionAudit {
             require(session.workers.ready(), "SDK START begins with ready real workers");
             session.events.add("start");
             super.waitForStart();
+            if (session.interruption == ButineRunner.Reason.DRIVE_BUSY)
+                follower.follow(Paths.line(START, NEXT).constant(0));
         }
     }
 
@@ -304,7 +382,7 @@ public final class CompetitionCollectionAudit {
             session.on_control_thread();
             session.localizerTicks++;
             if (!session.startedReady && session.workers != null && session.workers.ready()
-                    && session.workers.map().size() == 1) {
+                    && session.workers.map().size() == (session.emptyMap ? 0 : 1)) {
                 session.startedReady = true;
                 session.events.add("detector-ready");
                 set(session.opMode, "isStarted", true);
@@ -325,6 +403,7 @@ public final class CompetitionCollectionAudit {
             } else if (follower != null && follower.holding()) {
                 motion = MotionState.zero().withPose(follower.poseAt(0));
             }
+            session.finalPose = motion.pose();
         }
     }
 
@@ -336,6 +415,11 @@ public final class CompetitionCollectionAudit {
         }
         @Override public void follow(Path path) {
             session.on_control_thread();
+            if (session.interruption == ButineRunner.Reason.DRIVE_BUSY && !session.existingBusyDrive) {
+                session.existingBusyDrive = true;
+                super.follow(path);
+                return;
+            }
             if (session.workers.owns_drive()) {
                 require(session.flowerDown, "collection lowers its mechanism before dispatch");
                 if (session.collectionPaths == 0) {
@@ -359,6 +443,17 @@ public final class CompetitionCollectionAudit {
                 }
                 require(path.endPose().distance(new Pose(DEPOT.x, DEPOT.y, DEPOT.heading)) < 1e-6,
                         "compound run actually ends at the requested depot");
+            } else if (session.emptyMap) {
+                require(session.workers.collection_result() != null
+                                && session.workers.collection_result().outcome == ButineRunner.Outcome.NO_TARGETS,
+                        "fallback park follows this attempt's empty-map result");
+                require(path.get(0).distance(pose()) < 1e-6
+                                && path.endPose().distance(new Pose(19, 108, 0)) < 1e-6,
+                        "fallback park is routed from the actual live position to the terminal target");
+                require(!session.intaking && !session.flowerDown && !session.shooting,
+                        "empty-map fallback disables collection and shooting before parking");
+                session.parkPaths++;
+                session.parkAt = session.opMode.getRuntime();
             } else {
                 require(session.runner().state() == ButineRunner.State.COMPLETE && session.runner().stats().runsCompleted == 1,
                         "next queued path begins only after an actual completed return");
@@ -370,6 +465,11 @@ public final class CompetitionCollectionAudit {
                 session.nextPaths++; session.events.add("next-follow");
             }
             super.follow(path);
+        }
+        @Override public void stop() {
+            if (session != null && session.existingBusyDrive && session.workers != null
+                    && session.workers.collection_result() == null) session.stopsBeforeAdmission++;
+            super.stop();
         }
     }
 

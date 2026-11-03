@@ -65,5 +65,6 @@ public class BothFlowersNoGarden extends AbstractAuto {
                 SHOOT_IN_UPPER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_path(tangent_path(SHOOT_IN_UPPER_HIVE, PARK_CONTROL1, PARK));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }

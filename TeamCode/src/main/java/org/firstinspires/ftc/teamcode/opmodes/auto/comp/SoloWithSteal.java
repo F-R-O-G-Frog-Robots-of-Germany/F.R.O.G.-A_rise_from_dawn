@@ -78,5 +78,6 @@ public class SoloWithSteal extends AbstractAuto {
                 SHOOT_GARDEN_CONTROL1, SHOOT_IN_LOWER_HIVE), SHOT_DURATION_SECONDS);
 
         queue_path(tangent_path(SHOOT_IN_LOWER_HIVE, PARK_CONTROL1, PARK));
+        // queue_park(); // Optional Butine parking stays disconnected until explicitly enabled.
     }
 }
