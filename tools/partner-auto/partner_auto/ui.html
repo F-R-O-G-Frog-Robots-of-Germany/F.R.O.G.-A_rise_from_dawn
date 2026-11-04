@@ -42,12 +42,12 @@
       <div class="row"><button id="add" type="button">Save pasted source</button><button id="new-paste" type="button">New pasted source</button></div>
       <p id="paste-note" class="tip">Pasted source stays in the editor, including when an import fails.</p>
       <div class="grid">
-        <div><label for="format">Format</label><select id="format"><option value="auto">Detect automatically</option value="java">Java source</option><option value="pp">Pedro .pp</option></select></div>
+        <div><label for="format">Format</label><select id="format"><option value="auto">Detect automatically</option><option value="java">Java source</option><option value="pp">Pedro .pp</option></select></div>
         <div><label for="entry">Autonomous</label><select id="entry"><option value="">Detect from source</option></select></div>
       </div>
       <details>
         <summary>Body and timing model</summary>
-        <p class="tip">These are provisional model values in inches and seconds. Source-defined waits are retained; model travel times are estimates.</p>
+        <p class="tip">These are provisional model values in inches and seconds. If the estimated total exceeds AUTO duration, the timeline, waits and occupancy are compressed proportionally to fit.</p>
         <div class="grid" id="settings">
           <div><label for="field_size_in">Field size (in)</label><input id="field_size_in" type="number" value="144" min="1" step="0.1"></div>
           <div><label for="speed_in_s">Cruise speed (in/s)</label><input id="speed_in_s" type="number" value="30" min="0.1" step="1"></div>
@@ -113,18 +113,22 @@
   el('settings').addEventListener('input', changed); el('format').addEventListener('change', changed); el('entry').addEventListener('change', changed);
   el('paste').addEventListener('input', changed); el('profile-name').addEventListener('input',saveDraft);
   function flatten(actions, depth=0) { const out=[]; for (const action of actions || []) { out.push({...action,depth}); if (action.children) out.push(...flatten(action.children,depth+1)); for (const branch of action.branches || []) out.push(...flatten(branch.actions,depth+1)); } return out; }
-  function durationText(action) { const number=v=>Number(v).toFixed(2); if('start_min_s' in action) { const range=(lo,hi)=>hi==null ? number(lo)+'–?' : Math.abs(lo-hi)<1e-8 ? number(lo) : number(lo)+'–'+number(hi); return `${range(action.start_min_s,action.start_max_s)} → ${range(action.end_min_s,action.end_max_s)} s · ${action.timing_basis || 'unknown'}`; } const d = action.duration; if (!d) return action.kind === 'move' || action.kind === 'turn' ? 'Motion-model estimate' : 'See timing profile'; const min=d.min_s ?? 0; return `${number(min)}${d.max_s == null ? '–?':d.max_s !== min ? '–'+number(d.max_s):''} s · ${d.basis || 'unknown'}`; }
+  function durationText(action, scale=1) { const number=v=>Number(v).toFixed(2); if('start_min_s' in action) { const range=(lo,hi)=>hi==null ? number(lo)+'–?' : Math.abs(lo-hi)<1e-8 ? number(lo) : number(lo)+'–'+number(hi); return `${range(action.start_min_s,action.start_max_s)} → ${range(action.end_min_s,action.end_max_s)} s · ${action.timing_basis || 'unknown'}${scale<1 ? ' · scaled ×'+scale.toFixed(3) : ''}`; } const d = action.duration; if (!d) return action.kind === 'move' || action.kind === 'turn' ? 'Motion-model estimate' : 'See timing profile'; const min=d.min_s ?? 0; return `${number(min)}${d.max_s == null ? '–?':d.max_s !== min ? '–'+number(d.max_s):''} s · ${d.basis || 'unknown'}`; }
   function show(result) {
     profile = result;
+    const scale = Number.isFinite(result.summary?.time_scale_factor) && result.summary.time_scale_factor>0 ? result.summary.time_scale_factor : 1;
     el('status').textContent = ({complete:'Extracted · model timing',incomplete:'Incomplete · review findings',invalid:'Invalid source',selection_required:'Choose an autonomous'})[result.status] || result.status;
+    if (scale<1 && result.status==='complete') el('status').textContent='Extracted · scaled timing';
     el('export').disabled = result.status === 'invalid' || result.status === 'selection_required';
     el('diagnostics').replaceChildren();
     for (const d of result.diagnostics || []) { const item=document.createElement('div'); item.className='diagnostic '+d.severity; item.textContent=`${d.severity || 'info'} · ${d.message}${d.source ? ' ('+d.source.file+(d.source.line ? ':'+d.source.line:'')+')':''}`; el('diagnostics').append(item); }
     if (!(result.diagnostics || []).length) el('diagnostics').textContent='No extraction findings. Motion timing is still a model estimate.';
     el('actions').replaceChildren();
     const actions=result.timeline?.length ? result.timeline : flatten(result.actions);
-    for (const action of actions) { const tr=document.createElement('tr'); const type=document.createElement('td'); type.textContent='  '.repeat(action.depth || 0)+(action.kind || 'unknown')+(action.label ? ' · '+action.label:''); const duration=document.createElement('td'); duration.textContent=durationText(action); const source=document.createElement('td'); source.textContent=action.source ? action.source.file+(action.source.line ? ':'+action.source.line:'') : ''; tr.append(type,duration,source); el('actions').append(tr); }
-    el('summary').textContent=`${actions.length} extracted actions · ${(result.reservations || []).length} occupancy intervals. Timing bounds are estimates and declared conditions, not measured partner positions.`;
+    for (const action of actions) { const tr=document.createElement('tr'); const type=document.createElement('td'); type.textContent='  '.repeat(action.depth || 0)+(action.kind || 'unknown')+(action.label ? ' · '+action.label:''); const duration=document.createElement('td'); duration.textContent=durationText(action,scale); const source=document.createElement('td'); source.textContent=action.source ? action.source.file+(action.source.line ? ':'+action.source.line:'') : ''; tr.append(type,duration,source); el('actions').append(tr); }
+    const seconds=(lo,hi)=>Number(lo).toFixed(2)+(hi==null ? '–?' : Math.abs(lo-hi)<1e-8 ? '' : '–'+Number(hi).toFixed(2));
+    const scaling=scale<1 ? ` Timeline compressed to ${(scale*100).toFixed(1)}%: ${seconds(result.summary.unscaled_duration_min_s,result.summary.unscaled_duration_max_s)} s estimate → ${seconds(result.summary.duration_min_s,result.summary.duration_max_s)} s. Paths, waits and occupancy use this scale.` : '';
+    el('summary').textContent=`${actions.length} extracted actions · ${(result.reservations || []).length} occupancy intervals.${scaling} Timing bounds are estimates and declared conditions, not measured partner positions.`;
     el('json').textContent=JSON.stringify(result,null,2);
     el('clock').max=String(result.settings?.auto_duration_s || 30);
     draw();

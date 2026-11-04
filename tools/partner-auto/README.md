@@ -72,7 +72,9 @@ Java support follows source-defined inheritance, methods, constants and supporte
 
 Road Runner straight segments, turns and supported sequential/parallel actions are understood. Road Runner spline geometry and concurrent temporal/displacement markers currently remain unresolved instead of being replaced with guessed straight lines or omitted actions. Raw asynchronous Pedro dispatch also requires a recognized completion wait; an intervening action cannot be assumed to happen after path arrival.
 
-The output retains action and diagnostic source references so a route can be checked against the supplied code. Preserve unresolved branches and duration bounds during review; a guessed sensor outcome must not become an exact partner schedule.
+Pedro heading setters preserve standalone updates and shared path references. Legacy boolean reversal, current heading reversal and partial linear interpolation are retained. Heading fields ending in `_rad` use radians; for example, `1.5878` radians is approximately 91 degrees.
+
+The output retains action and diagnostic source references so a route can be checked against the supplied code. Path actions cite the autonomous call site; helper definitions remain available as additional source metadata. Preserve unresolved branches and duration bounds during review; a guessed sensor outcome must not become an exact partner schedule.
 
 ## Body and timing model
 
@@ -96,7 +98,11 @@ For CLI imports, `--settings settings.json` supplies a JSON object with any of t
 }
 ```
 
-Source-defined waits and modeled travel are labeled separately. Unknown duration stays unbounded; it does not become zero seconds. The route preview and occupied regions are predictions for offline planning. They are not observations of where the partner is, and passing a predicted departure time does not prove a lane has cleared. Runtime cooperation remains separate work.
+Source-defined waits and modeled travel are labeled separately. If the finite maximum estimated total exceeds the configured AUTO duration, action timing is compressed proportionally to fit. With the default 30-second duration, a 60-second estimate uses a factor of 0.5: path times, waits, turns, start delay and timeout thresholds take half their original estimated time. Occupancy follows the fitted action timing; the configured timing allowance stays in seconds, and final/abort holds still extend to the AUTO deadline. The route geometry and action order remain intact, including paths that originally fell after 30 seconds. Estimates that already fit are unchanged. Unknown duration stays unbounded and is not compressed into a finite schedule.
+
+The UI labels compressed timing and shows the original and fitted totals. JSON `summary.time_scale_factor` records the factor, `summary.unscaled_duration_min_s` and `summary.unscaled_duration_max_s` preserve the original estimates, and `summary.duration_min_s` and `summary.duration_max_s` describe the fitted timeline. Original source-defined durations remain in `actions`; the fitted times are in `timeline` and `reservations`.
+
+The route preview and occupied regions are predictions for offline planning. Compressing a timeline is a planning convention, not a measured speed increase. The preview does not observe where the partner is, and passing a predicted departure time does not prove a lane has cleared. Runtime cooperation remains separate work.
 
 ## Export and exit status
 
@@ -112,6 +118,8 @@ python -m unittest discover -s tools/partner-auto/tests -v
 
 The checks exercise `.pp` migration, execution order and waits, inherited Java extraction, source errors, timing/occupancy behavior, command-line export and the actual local HTTP import boundary. Java checks require the JDK. No robot testing is performed by this command.
 
-Validation on 2 November 2026 passed 71 test methods, including all 18 actual FROG RED/BLUE autonomous exports. CLI imports of the repository `.pp` sample and inherited Java autos produced JSON profiles. A real headless Chrome check exercised paste, HTTP import, route/occupancy rendering and export availability. Generic default motion estimates can exceed the match duration; the tool reports this rather than claiming production timing. The test log is `build/partner-auto-tests-2026-11-02.log`.
+Validation on 2 November 2026 passed 71 test methods, including all 18 actual FROG RED/BLUE autonomous exports. CLI imports of the repository `.pp` sample and inherited Java autos produced JSON profiles. A real headless Chrome check exercised paste, HTTP import, route/occupancy rendering and export availability. The original generic motion estimates could exceed the match duration; current profiles fit finite overlong estimates proportionally and retain the original totals. The test log is `build/partner-auto-tests-2026-11-02.log`.
 
 Follow-up fixes passed 80 tests, adding failed-request draft retention, edited retries without duplicate classes, refresh restoration, combined Java pastes, the exact AbstractAuto + OptimalPoses + BothFlowersNoGarden input, and detached-launch/reopen/shutdown behavior. The test log is `build/partner-auto-fixes-2026-11-02.log`. Node.js is optional for the UI interaction regression checks; the importer itself still needs only Python and, for Java source, a JDK.
+
+Validation on 3 November 2026 passed 96 regression tests and 63 corrected HTTP checks. All 30 actual `.pp` inputs and all 18 repository autos imported completely without errors; four `.pp` timelines and 16 Java timelines were proportionally fitted to 30 seconds. Each `.pp` input now has a distinct empirical export filename and full source path. The malformed first-path case reports one root error and a dependent-origin summary while preserving all 26 unresolved actions. Logs are `build/partner-auto/review-2026-11-03-unittest.log`, `build/partner-auto/review-2026-11-03-empirical_check.log` and `build/partner-auto/review-2026-11-03-adversarial_check.log`.

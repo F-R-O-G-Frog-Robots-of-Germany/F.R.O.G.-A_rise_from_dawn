@@ -10,6 +10,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from partner_auto.pp_import import import_pp
+from partner_auto.motion import build_profile
 
 
 def line(path_id="a", x=20, y=10, **extra):
@@ -162,6 +163,33 @@ class PPImportTests(unittest.TestCase):
     def test_duplicate_path_id_is_ambiguous_not_silently_selected(self):
         result = import_pp(project(line("a"), line("a", 30, 10)))
         self.assertIn("DUPLICATE_PATH_ID", [d["code"] for d in errors(result)])
+        self.assertTrue(all(a["kind"] == "unknown" for a in result["actions"]))
+
+    def test_invalid_first_path_reports_cause_once_and_keeps_unknown_work(self):
+        paths = [line(f"path-{i}", x=20 + i) for i in range(26)]
+        paths[0]["endPoint"] = [{"x": 20, "y": 10}]
+        result = import_pp(project(*paths))
+        self.assertEqual(["INVALID_PATH"], [d["code"] for d in errors(result)])
+        self.assertEqual("lines[0]", errors(result)[0]["source"]["location"])
+        summaries = [d for d in result["diagnostics"] if d["code"] == "DEPENDENT_PATH_ORIGINS"]
+        self.assertEqual(1, len(summaries))
+        self.assertIn("25 subsequent paths", summaries[0]["message"])
+        self.assertEqual(26, len(result["actions"]))
+        self.assertTrue(all(a["kind"] == "unknown" and a["diagnostic_reported"]
+                            and a["duration"]["max_s"] is None for a in result["actions"]))
+        profile = build_profile(result)
+        self.assertEqual("invalid", profile["status"])
+        self.assertIsNone(profile["summary"]["duration_max_s"])
+
+    def test_lost_origins_do_not_hide_independent_path_errors(self):
+        paths = [line(f"path-{i}", x=20 + i) for i in range(4)]
+        paths[0]["endPoint"] = []
+        paths[2]["heading"] = {"type": "constant", "degrees": "bad"}
+        result = import_pp(project(*paths))
+        self.assertEqual(["lines[0]", "lines[2]"],
+                         [d["source"]["location"] for d in errors(result)])
+        self.assertIn("degrees must be a finite number", errors(result)[1]["message"])
+        self.assertEqual(4, len(result["actions"]))
         self.assertTrue(all(a["kind"] == "unknown" for a in result["actions"]))
 
     def test_no_source_object_mutation_and_deterministic_import(self):

@@ -68,5 +68,25 @@ function makePage(storage = new Map(), response = async () => ({ok:true,status:2
   restored.el('paste').value='class Another {}';
   await restored.el('import').click();
   assert.equal(Object.keys(restored.requests[1].body.sources).length,2,'New paste retains the earlier file');
-  console.log('UI regression checks passed: draft retention, failed/edited retries, local-only fetch, reload and multi-file editing.');
+  const scaledResult={...result,
+    summary:{time_scale_factor:0.5,unscaled_duration_min_s:60,unscaled_duration_max_s:60,duration_min_s:30,duration_max_s:30},
+    actions:[{kind:'wait',duration:{min_s:60,max_s:60,basis:'source'}}],
+    timeline:[{kind:'wait',start_min_s:0,start_max_s:0,end_min_s:30,end_max_s:30,timing_basis:'source'}],
+    reservations:[{window_start_s:29,window_end_s:30,bounds:{min_x:10,min_y:10,max_x:20,max_y:20}}]};
+  const scaledPage=makePage(new Map(),async()=>({ok:true,status:200,json:async()=>scaledResult}));
+  scaledPage.el('paste').value=PP;
+  await scaledPage.el('import').click();
+  assert.equal(scaledPage.el('status').textContent,'Extracted · scaled timing');
+  assert(scaledPage.el('summary').textContent.includes('compressed to 50.0%: 60.00 s estimate → 30.00 s'));
+  assert(scaledPage.el('actions').children[0].children[1].textContent.includes('0.00 → 30.00 s · source · scaled ×0.500'));
+  assert.equal(scaledPage.el('clock').max,'30');
+  assert.equal(JSON.parse(scaledPage.el('json').textContent).actions[0].duration.min_s,60,'Raw source duration stays available alongside fitted timing');
+  scaledPage.el('clock').value='29.5';
+  scaledPage.el('clock').events.input();
+  assert(scaledPage.el('field').children.some(n=>n.tag==='rect' && n.attrs.opacity===String(.18)),'Fitted occupancy remains visible near the deadline');
+  const unknownPage=makePage(new Map(),async()=>({ok:true,status:200,json:async()=>({...result,status:'incomplete',summary:{time_scale_factor:1,unscaled_duration_min_s:60,unscaled_duration_max_s:null,duration_min_s:60,duration_max_s:null}})}));
+  unknownPage.el('paste').value=PP;
+  await unknownPage.el('import').click();
+  assert(!unknownPage.el('summary').textContent.includes('compressed'),'Unbounded timing must not claim a fitted finite schedule');
+  console.log('UI regression checks passed: draft retention, failed/edited retries, local-only fetch, reload, multi-file editing and fitted timing display.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

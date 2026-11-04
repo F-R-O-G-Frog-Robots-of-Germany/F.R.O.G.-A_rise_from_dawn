@@ -350,13 +350,16 @@ def _has_motion(action: dict) -> bool:
 
 
 class _Builder:
-    def __init__(self, imported: dict, settings: dict):
+    def __init__(self, imported: dict, settings: dict, *, time_scale_factor: float = 1.0,
+                 timing_only: bool = False):
         self.result = deepcopy(imported)
         if not isinstance(self.result.get("diagnostics", []), list):
             raise ValueError("diagnostics must be a list")
         self.result.setdefault("diagnostics", [])
         self.settings = dict(DEFAULT_SETTINGS)
         self.settings.update(settings)
+        self.time_scale_factor = time_scale_factor
+        self.timing_only = timing_only
         for key in DEFAULT_SETTINGS:
             self.settings[key] = _number(self.settings[key], key, minimum=0,
                 positive=key not in ("clearance_in", "start_delay_s", "timing_uncertainty_s"))
@@ -388,6 +391,8 @@ class _Builder:
     def reservation(self, begin: _State, end: _State, bounds: dict, kind: str, index: int,
                     label: str, basis: str, offset_a: float = 0, offset_b: float = 0,
                     spatial_basis: str = "swept_body") -> None:
+        if self.timing_only:
+            return
         uncertainty, limit = self.settings["timing_uncertainty_s"], self.settings["auto_duration_s"]
         first = max(0, begin.minimum + offset_a - uncertainty)
         last = None if end.maximum is None else end.maximum + offset_b + uncertainty
@@ -411,10 +416,18 @@ class _Builder:
         lo, hi, basis = duration
         end = _State(start.minimum + lo,
                      None if start.maximum is None or hi is None else start.maximum + hi, end_poses)
+        if self.time_scale_factor < 1:
+            # Floating-point accumulation can put the final fitted event a few
+            # ulps beyond AUTO even though its mathematical total is the limit.
+            limit = self.settings["auto_duration_s"]
+            end.minimum = min(limit, end.minimum)
+            if end.maximum is not None:
+                end.maximum = min(limit, end.maximum)
         item = {"index": len(self.timeline), "kind": action.get("kind", "unknown"),
                 "start_min_s": start.minimum, "start_max_s": start.maximum,
                 "end_min_s": end.minimum, "end_max_s": end.maximum,
                 "duration_min_s": lo, "duration_max_s": hi, "timing_basis": basis,
+                "time_scale_factor": self.time_scale_factor,
                 "source": action.get("source"), "branch": label, "parallel_group": group,
                 "start_pose": _pose_json(start.poses[0]) if start.poses and len(start.poses) == 1 else None,
                 "end_pose": _pose_json(end_poses[0]) if end_poses and len(end_poses) == 1 else None}
@@ -428,7 +441,8 @@ class _Builder:
         raw = action.get("duration")
         if raw is None:
             if default is not None:
-                return default
+                lo, hi, basis = default
+                return lo * self.time_scale_factor, None if hi is None else hi * self.time_scale_factor, basis
             self.diagnostic("duration_unknown", "An action has no bounded source duration", action, unresolved=True)
             return 0.0, None, "unknown"
         if not isinstance(raw, dict):
@@ -440,11 +454,13 @@ class _Builder:
             raise ValueError("Duration basis must be source, estimated or unknown")
         if hi is None:
             self.unresolved = True
-        return lo, hi, basis
+        return lo * self.time_scale_factor, None if hi is None else hi * self.time_scale_factor, basis
 
     def abort_holds(self, action: dict, start: _State, bounds: dict, poses: list | None,
                     label: str, group: int | None, spatial_basis: str) -> None:
         """Retain source timeout/abort outcomes as occupancy, not just normal completion."""
+        if self.timing_only:
+            return
         metadata = action.get("metadata", {})
         if not isinstance(metadata, dict):
             raise ValueError("Action metadata must be an object")
@@ -454,17 +470,20 @@ class _Builder:
             outcome = action.get(outcome_key, metadata.get(outcome_key))
             if timeout is None or outcome != "abort":
                 continue
-            timeout = _number(timeout, timeout_key, minimum=0)
+            timeout = _number(timeout, timeout_key, minimum=0) * self.time_scale_factor
             earliest = start.minimum + timeout
             if earliest >= self.settings["auto_duration_s"]:
                 continue
             abort_start = _State(earliest, None if start.maximum is None else start.maximum + timeout, poses)
             deadline = self.settings["auto_duration_s"]
+            if abort_start.maximum is not None:
+                abort_start.maximum = min(deadline, abort_start.maximum)
             abort_end = _State(deadline, deadline, poses)
             branch_label = "/".join(filter(None, [label, "abort:" + timeout_key]))
             item, _ = self.event({"kind": "abort_hold", "source": action.get("source"),
                                   "detail": "Source timeout ends the sequence; the robot remains an obstacle"},
-                                 abort_start, (max(0, deadline - earliest), max(0, deadline - earliest), "source"),
+                                 abort_start, (0 if abort_start.maximum is None else max(0, deadline - abort_start.maximum),
+                                               max(0, deadline - earliest), "source"),
                                  poses, branch_label, group)
             item["end_min_s"] = item["end_max_s"] = deadline
             item["possible_bounds"] = bounds
@@ -539,12 +558,14 @@ class _Builder:
         if kind in ("wait", "shoot", "hold", "mechanism"):
             default = (0.0, 0.0, "source") if kind == "mechanism" else None
             if kind == "hold" and "duration" not in action:
-                duration = (0 if state.maximum is None else max(0, self.settings["auto_duration_s"] - state.maximum),
-                            max(0, self.settings["auto_duration_s"] - state.minimum), "source")
+                deadline = self.settings["auto_duration_s"] * self.time_scale_factor
+                duration = (0 if state.maximum is None else max(0, deadline - state.maximum),
+                            max(0, deadline - state.minimum), "source")
                 # Hold until an absolute deadline; unlike an ordinary duration it does
                 # not get longer when a prior action is delayed.
                 item, end = self.event(action, state, duration, state.poses, label, group)
-                end.minimum = end.maximum = max(state.minimum, self.settings["auto_duration_s"])
+                end.minimum = max(state.minimum, deadline)
+                end.maximum = None if state.maximum is None else max(state.maximum, deadline)
                 item["end_min_s"], item["end_max_s"] = end.minimum, end.maximum
             else:
                 item, end = self.event(action, state, self.duration(action, default), state.poses, label, group)
@@ -554,8 +575,11 @@ class _Builder:
                 self.abort_holds(action, state, self.stationary_bounds(state.poses), state.poses, label,
                                  group, "stationary_body" if state.poses else "unknown_entire_field")
             return end
-        self.diagnostic("action_unknown", f"Unsupported or unresolved action {kind!r}; duration and possible motion remain unknown",
-                        action, unresolved=True)
+        if action.get("diagnostic_reported"):
+            self.unresolved = True
+        else:
+            self.diagnostic("action_unknown", f"Unsupported or unresolved action {kind!r}; duration and possible motion remain unknown",
+                            action, unresolved=True)
         duration = self.duration(action)
         # Even a supplied bound cannot establish where an unknown movement goes.
         poses = None if action.get("affects_motion", True) else state.poses
@@ -590,8 +614,11 @@ class _Builder:
             raise ValueError("A moving path cannot have a zero maximum duration")
         end_poses = [(finish[0], finish[1], headings[-1])]
         item, end = self.event(action, state, duration, end_poses, label, group)
-        item.update({"distance_in": path.length, "model_duration_s": nominal,
+        item.update({"distance_in": path.length, "model_duration_s": nominal * self.time_scale_factor,
+                     "unscaled_model_duration_s": nominal,
                      "motion_model": "rest-to-rest trapezoid; angular lower bound; estimated", "samples": []})
+        if self.timing_only:
+            return end
         if not origin_valid:
             self.reservation(state, end, self.field_bounds(), "unknown_transition", item["index"], label,
                              "unknown", spatial_basis="unknown_entire_field")
@@ -599,7 +626,8 @@ class _Builder:
         # duration. Long paths use coarser (still continuous-hull) intervals rather
         # than losing an un-sampled tail or allocating unbounded samples.
         period = self.settings["sample_period_s"]
-        relevant = min(nominal, self.settings["auto_duration_s"] + self.settings["timing_uncertainty_s"])
+        sample_duration = duration[1] if duration[1] is not None else nominal * self.time_scale_factor
+        relevant = min(sample_duration, self.settings["auto_duration_s"] + self.settings["timing_uncertainty_s"])
         count = max(1, math.ceil(relevant / period)) if nominal > EPSILON else 1
         self.total_samples += count + 1
         if self.total_samples > MAX_SAMPLES:
@@ -609,7 +637,9 @@ class _Builder:
             fraction = min(1, offset / nominal) if nominal > EPSILON else 1
             distance = travel.position(fraction) if travel.duration > EPSILON else path.length * fraction
             point = path.at(distance)
-            item["samples"].append({"offset_s": offset, "x": point[0], "y": point[1],
+            item["samples"].append({"offset_s": fraction * duration[0],
+                                    "offset_max_s": None if duration[1] is None else fraction * duration[1],
+                                    "x": point[0], "y": point[1],
                                     "heading_rad": path.heading(distance, fallback, fraction)})
             if index == 0:
                 continue
@@ -677,6 +707,9 @@ class _Builder:
                                  "duration": {"min_s": delay, "max_s": delay, "basis": "source"}},
                                 state, "", None, True, 0)
         state = self.sequence(actions, state)
+        if self.timing_only:
+            return {"summary": {"duration_min_s": state.minimum, "duration_max_s": state.maximum},
+                    "settings": self.settings}
         if state.minimum < self.settings["auto_duration_s"]:
             hold_start = state
             deadline = self.settings["auto_duration_s"]
@@ -690,8 +723,6 @@ class _Builder:
             item["end_min_s"], item["end_max_s"] = deadline, deadline
             self.reservation(hold_start, end, self.stationary_bounds(state.poses), "hold", item["index"], "", "source",
                              spatial_basis="stationary_body" if state.poses else "unknown_entire_field")
-        if state.maximum is not None and state.maximum > self.settings["auto_duration_s"]:
-            self.diagnostic("auto_overrun_possible", "The imported action estimate can extend beyond the configured AUTO deadline")
         errors = any(isinstance(item, dict) and item.get("severity") == "error" for item in self.result["diagnostics"])
         importer_incomplete = self.result.get("status") in ("incomplete", "invalid") or self.result.get("complete") is False
         self.result.update({"schema_version": "1.0", "status": "invalid" if errors else
@@ -702,7 +733,8 @@ class _Builder:
                 "reservation_count": len(self.reservations), "prediction_only": True,
                 "possible_abort_count": self.abort_count,
                 "corridor_bounds": _union_bounds([r["bounds"] for r in self.reservations]),
-                "model_note": "Source order and waits are retained; drive times use supplied rest-to-rest estimates. "
+                "model_note": "Source actions retain their original waits and order; timeline times are proportionally "
+                              "scaled when a bounded estimate exceeds AUTO duration. Drive times use supplied rest-to-rest estimates. "
                               "These reservations predict possible occupancy and do not establish observed clearance."}})
         return self.result
 
@@ -711,7 +743,9 @@ def build_profile(imported: dict, settings: dict | None = None) -> dict:
     """Return an exportable prediction profile; malformed input produces status=invalid.
 
     Clock ranges use elapsed AUTO seconds. A null maximum means unbounded/unknown,
-    not zero. Reservation window_* values are the uncertainty-expanded interval
+    not zero. Finite overlong schedules are proportionally fitted to AUTO before
+    generating occupancy; source actions retain their unscaled durations.
+    Reservation window_* values are the uncertainty-expanded interval
     clipped to the configured AUTO horizon. Bounds contain the entire swept body
     between samples via subcurve control hulls and all-heading body inflation.
     """
@@ -721,7 +755,22 @@ def build_profile(imported: dict, settings: dict | None = None) -> dict:
             raise ValueError("Imported data and settings must be objects")
         json.dumps(imported, allow_nan=False)
         json.dumps(settings or {}, allow_nan=False)
-        result = _Builder(imported, settings or {}).build()
+        # Determine the full completion bound before any reservations are clipped
+        # to AUTO. Rebuild in the fitted clock so late paths and abort outcomes
+        # remain present, and apply the configured uncertainty in actual seconds.
+        estimate = _Builder(imported, settings or {}, timing_only=True).build()
+        original = estimate["summary"]
+        maximum = original["duration_max_s"]
+        limit = estimate["settings"]["auto_duration_s"]
+        factor = limit / maximum if maximum is not None and maximum > limit else 1.0
+        result = _Builder(imported, settings or {}, time_scale_factor=factor).build()
+        result["summary"].update(time_scale_factor=factor,
+                                 unscaled_duration_min_s=original["duration_min_s"],
+                                 unscaled_duration_max_s=maximum)
+        if factor < 1:
+            result["diagnostics"].append({"severity": "info", "code": "timeline_scaled",
+                "message": f"Timeline scaled by {factor:.6g}: {maximum:.6g} s estimate fits {limit:g} s AUTO. "
+                           "Paths, waits, start delay and timeout thresholds use the same factor; source actions retain original times."})
         json.dumps(result, allow_nan=False)
         return result
     except (ValueError, TypeError, KeyError, OverflowError, RecursionError) as failure:

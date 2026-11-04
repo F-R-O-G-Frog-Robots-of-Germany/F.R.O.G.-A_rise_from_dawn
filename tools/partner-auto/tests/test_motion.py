@@ -133,9 +133,92 @@ class MotionChecks(unittest.TestCase):
         profile = self.profile([action], speed_in_s=1, acceleration_in_s2=1)
         self.assertEqual(profile["summary"]["duration_min_s"], 1)
         self.assertEqual(profile["timeline"][0]["samples"][-1]["x"], 100)
+        self.assertEqual(profile["timeline"][0]["samples"][-1]["offset_s"], 1)
         last_move = [r for r in profile["reservations"] if r["kind"] == "move"][-1]
         self.assertTrue(contains(last_move["bounds"], 100, 0))
         self.assertLessEqual(last_move["window_end_s"], 1)
+
+    def test_overlong_schedule_scales_every_action_and_keeps_late_occupancy(self):
+        actions = [move([[0, 0], [10, 0]], duration={"min_s": 20, "max_s": 20, "basis": "source"}),
+                   wait(10), {"kind": "turn", "angle_rad": math.pi},
+                   move([[10, 0], [20, 0]], duration={"min_s": 25, "max_s": 25, "basis": "source"})]
+        profile = self.profile(actions, start_delay_s=4)
+        summary = profile["summary"]
+        self.assertEqual((summary["unscaled_duration_max_s"], summary["duration_max_s"]), (60, 30))
+        self.assertEqual(summary["time_scale_factor"], 0.5)
+        self.assertEqual([e["duration_max_s"] for e in profile["timeline"]], [2, 10, 5, 0.5, 12.5])
+        self.assertEqual(profile["actions"][0]["duration"]["max_s"], 20)
+        self.assertEqual(profile["timeline"][1]["samples"][-1]["offset_s"], 10)
+        late = [r for r in profile["reservations"] if r["action_index"] == 4]
+        self.assertTrue(any(r["window_start_s"] <= 29.9 <= r["window_end_s"]
+                            and contains(r["bounds"], 20, 0) for r in late))
+        self.assertIn("timeline_scaled", [d["code"] for d in profile["diagnostics"]])
+
+    def test_scaling_preserves_ranges_and_configured_uncertainty(self):
+        profile = self.profile([wait(40, 60)], timing_uncertainty_s=0.5)
+        event = profile["timeline"][0]
+        self.assertEqual((event["duration_min_s"], event["duration_max_s"]), (20, 30))
+        self.assertEqual(profile["reservations"][0]["end_max_s"], 30.5)
+        self.assertEqual(profile["reservations"][0]["window_end_s"], 30)
+        hold = profile["timeline"][-1]
+        self.assertEqual((hold["duration_min_s"], hold["duration_max_s"]), (0, 10))
+        self.assertEqual((hold["end_min_s"], hold["end_max_s"]), (30, 30))
+
+    def test_scaling_uses_parallel_completion_and_custom_deadline(self):
+        profile = self.profile([{"kind": "parallel", "children": [
+            move([[0, 0], [50, 0]], duration={"min_s": 20, "max_s": 20, "basis": "source"}), wait(60)]}],
+            auto_duration_s=20)
+        self.assertAlmostEqual(profile["summary"]["time_scale_factor"], 1 / 3)
+        self.assertEqual(profile["summary"]["duration_max_s"], 20)
+        hold = next(r for r in profile["reservations"] if r["kind"] == "parallel_hold")
+        self.assertAlmostEqual(hold["start_min_s"], 20 / 3)
+        self.assertEqual(hold["window_end_s"], 20)
+        self.assertTrue(contains(hold["bounds"], 50, 0))
+
+    def test_late_abort_outcome_is_scaled_before_deadline_filtering(self):
+        profile = self.profile([wait(10, 20), move([[0, 0], [100, 0]],
+            duration={"min_s": 40, "max_s": 40, "basis": "source"}, timeout_s=35, on_timeout="abort")])
+        abort = next(e for e in profile["timeline"] if e["kind"] == "abort_hold")
+        self.assertEqual((abort["start_min_s"], abort["start_max_s"]), (22.5, 27.5))
+        self.assertEqual((abort["duration_min_s"], abort["duration_max_s"]), (2.5, 7.5))
+        self.assertEqual((abort["end_min_s"], abort["end_max_s"]), (30, 30))
+        reservation = next(r for r in profile["reservations"] if r["kind"] == "abort_hold")
+        self.assertEqual(reservation["window_end_s"], 30)
+        self.assertTrue(contains(reservation["bounds"], 100, 0))
+        late = self.profile([wait(0, 50), move([[0, 0], [30, 0]], timeout_s=15, on_timeout="abort")])
+        late_abort = next(e for e in late["timeline"] if e["kind"] == "abort_hold")
+        self.assertEqual(late_abort["start_max_s"], 30)
+        self.assertEqual(late_abort["duration_min_s"], 0)
+
+    def test_unknown_duration_is_not_given_an_invented_scaling_factor(self):
+        profile = self.profile([wait(60), wait(0, None)])
+        self.assertEqual(profile["summary"]["time_scale_factor"], 1)
+        self.assertIsNone(profile["summary"]["unscaled_duration_max_s"])
+        self.assertIsNone(profile["summary"]["duration_max_s"])
+        self.assertEqual(profile["status"], "incomplete")
+        for total in (10, 30):
+            with self.subTest(total=total):
+                bounded = self.profile([wait(total)])
+                self.assertEqual(bounded["summary"]["time_scale_factor"], 1)
+                self.assertEqual(bounded["summary"]["duration_max_s"], total)
+
+    def test_source_deadline_hold_scales_but_terminal_occupancy_keeps_auto_deadline(self):
+        profile = self.profile([{"kind": "hold"}, wait(30)])
+        self.assertEqual(profile["summary"]["unscaled_duration_max_s"], 60)
+        self.assertEqual(profile["timeline"][0]["end_max_s"], 15)
+        self.assertEqual(profile["summary"]["duration_max_s"], 30)
+
+    def test_source_hold_preserves_late_and_unknown_arrivals(self):
+        profile = self.profile([wait(20, 60), {"kind": "hold"}])
+        self.assertEqual(profile["summary"]["time_scale_factor"], 0.5)
+        self.assertEqual(profile["summary"]["duration_max_s"], 30)
+        hold = profile["timeline"][1]
+        self.assertEqual((hold["start_min_s"], hold["start_max_s"]), (10, 30))
+        self.assertEqual((hold["end_min_s"], hold["end_max_s"]), (15, 30))
+        unknown = self.profile([wait(20, None), {"kind": "hold"}])
+        self.assertEqual(unknown["summary"]["time_scale_factor"], 1)
+        self.assertIsNone(unknown["summary"]["duration_max_s"])
+        self.assertIsNone(unknown["timeline"][1]["end_max_s"])
 
     def test_unknown_action_propagates_time_and_spatial_uncertainty(self):
         profile = self.profile([{"kind": "unknown", "detail": "sensor-dependent custom movement"},

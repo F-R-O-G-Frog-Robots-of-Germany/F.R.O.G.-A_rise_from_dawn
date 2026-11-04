@@ -117,9 +117,9 @@ def _duration(lo, hi=None, basis="source"):
     return {"min_s": lo, "max_s": lo if hi is None else hi, "basis": basis}
 
 
-def _unknown_action(detail, source=None):
+def _unknown_action(detail, source):
     return {"kind": "unknown", "label": detail, "duration": {"min_s": 0, "max_s": None, "basis": "unknown"},
-            **({"source": source} if source else {})}
+            "source": source}
 
 
 def _is_number(value): return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
@@ -321,7 +321,7 @@ class Interpreter:
                 if short == "WaitCommand" and _is_number(seconds): seconds /= 1000
                 return self.timed("wait", seconds, node, frame)
             if short in ("SequentialAction", "SequentialCommandGroup", "ParallelAction", "ParallelCommandGroup"):
-                return {"kind": "parallel" if "Parallel" in short else "sequence", "children": self.action_values(args), "source": self.source(node, frame.cls)}
+                return {"kind": "parallel" if "Parallel" in short else "sequence", "children": self.action_values(args, self.source(node, frame.cls)), "source": self.source(node, frame.cls)}
             if short in ("ArrayList", "LinkedList"): return list(args[0]) if args and isinstance(args[0], list) else []
             if short in ("PathBuilder", "TrajectorySequenceBuilder"): return Builder("pedro" if short == "PathBuilder" else "rr", args[0] if args else self.position)
             resolved = self.resolve(node["type"], frame.cls)
@@ -441,22 +441,39 @@ class Interpreter:
             return _unknown_action("Unknown " + kind + " duration", self.source(node, frame.cls))
         return {"kind": kind, "duration": _duration(float(seconds)), "source": self.source(node, frame.cls)}
 
-    def action_values(self, values):
+    def action_values(self, values, source):
         result = []
         for value in values:
-            if isinstance(value, list): result.extend(self.action_values(value))
+            if isinstance(value, list): result.extend(self.action_values(value, source))
             elif isinstance(value, dict) and "kind" in value: result.append(value)
             elif isinstance(value, dict) and value.get("_path"):
                 result.append({"kind": "move", "path": value["path"], "source": value["source"]})
-            elif isinstance(value, Unknown): result.append(_unknown_action(value.detail))
-            elif isinstance(value, (Ref, Instance)): result.append(_unknown_action("Unresolved action " + (value.name if isinstance(value, Ref) else value.cls)))
+            elif isinstance(value, Unknown): result.append(_unknown_action(value.detail, source))
+            elif isinstance(value, (Ref, Instance)): result.append(_unknown_action("Unresolved action " + (value.name if isinstance(value, Ref) else value.cls), source))
         return result
 
-    def append_action(self, value, node, frame):
-        values = self.action_values([value])
+    def locate_action(self, action, source):
+        if action["kind"] == "move":
+            definition = action.get("source")
+            if definition and definition != source:
+                action.setdefault("path_definition", {"source": definition})
+            action["source"] = source
+        elif not action.get("source"):
+            action["source"] = source
+        for child in action.get("children", []): self.locate_action(child, source)
+        for branch in action.get("branches", []):
+            for child in branch.get("actions", []): self.locate_action(child, source)
+
+    def append_action(self, value, node, frame, snapshot=True):
+        source = self.source(node, frame.cls)
+        # A later mutation of a reused Java Path must not rewrite a prior dispatch.
+        # FROG queues retain their Path references until build_autonomous finishes.
+        values = self.action_values([value], source)
+        if snapshot: values = copy.deepcopy(values)
         if not values:
             values = [_unknown_action("Unresolved autonomous action", self.source(node, frame.cls))]
         for action in values:
+            self.locate_action(action, source)
             if action["kind"] == "unknown":
                 self.problem("error", "UNRESOLVED_ACTION", action.get("label", "Unknown autonomous action"), node, frame.cls)
             self.actions.append(action)
@@ -570,11 +587,40 @@ class Interpreter:
                 mode = "tangent" if "Tangent" in name or name == "tangent" else "linear" if "Linear" in name or name == "linear" else "constant"
                 h = lambda a: a.heading if isinstance(a, Pose) else a
                 heading = {"type": mode}
-                if args and _is_number(h(args[0])):
-                    heading["start_rad"] = h(args[0]); heading["end_rad"] = h(args[-1]) if mode == "linear" else h(args[0])
+                if args and _is_number(h(args[0])) and (mode != "linear" or len(args) >= 2 and _is_number(h(args[1]))):
+                    heading["start_rad"] = h(args[0]); heading["end_rad"] = h(args[1]) if mode == "linear" else h(args[0])
                 elif mode != "tangent": return Unknown("Unknown path heading")
-                result = copy.deepcopy(receiver); result["path"]["heading"] = heading; return result
-            if name in ("with", "build", "reversed", "setReversed"): return receiver
+                if mode == "linear" and len(args) > 2:
+                    # Pedro's third argument is the path fraction at which the
+                    # end heading is reached, never an additional heading angle.
+                    if len(args) != 3 or not _is_number(args[2]) or not 0 < args[2] <= 1:
+                        return Unknown("Unsupported linear heading interpolation range")
+                    if args[2] < 1:
+                        heading = {"type": "piecewise", "start_rad": h(args[0]), "end_rad": h(args[1]), "segments": [
+                            dict(heading, start_progress=0, end_progress=args[2]),
+                            {"type": "constant", "start_rad": h(args[1]), "end_rad": h(args[1]),
+                             "start_progress": args[2], "end_progress": 1}]}
+                result = receiver if name.startswith("set") else copy.deepcopy(receiver)
+                result["path"]["heading"] = heading
+                return result
+            if name in ("setReversed", "reversed", "reverseHeadingInterpolation"):
+                if args:
+                    if len(args) != 1 or not isinstance(args[0], bool): return Unknown("Unknown reversed heading flag")
+                    # Legacy Pedro setReversed(boolean) selects tangent heading.
+                    receiver["path"]["heading"] = {"type": "tangent", "reverse": args[0]}
+                else:
+                    def reverse(heading):
+                        result = copy.deepcopy(heading)
+                        for key in ("start_rad", "end_rad"):
+                            if key in result: result[key] = _wrap(result[key] + math.pi)
+                        if result["type"] == "piecewise":
+                            result["segments"] = [reverse(segment) for segment in result["segments"]]
+                        elif result["type"] not in ("constant", "linear"):
+                            result["reverse"] = not result.get("reverse", False)
+                        return result
+                    receiver["path"]["heading"] = reverse(receiver["path"]["heading"])
+                return receiver
+            if name in ("with", "build"): return receiver
         if isinstance(receiver, list):
             if name in ("add", "addAll"):
                 receiver.extend(args[0] if name == "addAll" and args and isinstance(args[0], list) else args); return True
@@ -630,7 +676,7 @@ class Interpreter:
                     self.append_action(action, node, frame)
                 else:
                     first_action = len(self.actions)
-                    self.append_action(args[0] if args else Unknown("Missing queued path"), node, frame)
+                    self.append_action(args[0] if args else Unknown("Missing queued path"), node, frame, snapshot=False)
                     timeout = self.field(method[0], "PATH_TIMEOUT_SECONDS", target)
                     for action in self.actions[first_action:]:
                         action["intake"] = name == "queue_intake_path"
@@ -658,15 +704,15 @@ class Interpreter:
 
     def builder_call(self, builder, name, args, frame, node):
         if name == "build":
-            if builder.mode == "pedro": return {"kind": "sequence", "children": self.action_values(builder.paths), "source": self.source(node, frame.cls)}
+            if builder.mode == "pedro": return {"kind": "sequence", "children": self.action_values(builder.paths, self.source(node, frame.cls)), "source": self.source(node, frame.cls)}
             return {"kind": "sequence", "children": builder.actions, "source": self.source(node, frame.cls)}
         if builder.mode == "pedro":
             if name == "addPath":
                 path = args[0] if len(args) == 1 else self.path(args, "bezier", {"type": "tangent"}, node, frame)
                 builder.paths.append(path); return builder
-            if name in ("setConstantHeadingInterpolation", "setLinearHeadingInterpolation", "setTangentHeadingInterpolation") and builder.paths:
+            if name in ("setConstantHeadingInterpolation", "setLinearHeadingInterpolation", "setTangentHeadingInterpolation", "setReversed") and builder.paths:
                 builder.paths[-1] = self.call(builder.paths[-1], name, args, frame, node); return builder
-            if name in ("setPathEndTimeoutConstraint", "setPathEndTValueConstraint", "setZeroPowerAccelerationMultiplier", "setReversed"):
+            if name in ("setPathEndTimeoutConstraint", "setPathEndTValueConstraint", "setZeroPowerAccelerationMultiplier"):
                 self.problem("warning", "MOTION_CONSTRAINT", "Imported " + name + "; movement timing still requires a motion model", node, frame.cls); return builder
             return Unknown("Unsupported Pedro builder operation " + name)
         if name in ("setTangent", "setReversed", "setVelConstraint", "setAccelConstraint", "resetVelConstraint", "resetAccelConstraint"):
@@ -675,7 +721,7 @@ class Interpreter:
         if name in ("waitSeconds",):
             builder.actions.append(self.timed("wait", args[0] if args else None, node, frame)); return builder
         if name in ("stopAndAdd", "afterTime", "afterDisp", "addTemporalMarker", "UNSTABLE_addTemporalMarkerOffset"):
-            if name == "stopAndAdd" and args: builder.actions.extend(self.action_values([args[0]]))
+            if name == "stopAndAdd" and args: builder.actions.extend(self.action_values([args[0]], self.source(node, frame.cls)))
             else:
                 builder.actions.append(_unknown_action("Concurrent action marker " + name + " requires review", self.source(node, frame.cls)))
                 self.problem("error", "ACTION_MARKER", "Concurrent marker timing is unresolved: " + name, node, frame.cls)
@@ -878,7 +924,7 @@ class Interpreter:
                 method = self.method(entry, hook, 0)
                 if method: self.invoke(receiver, method, [], self.classes[entry])
             self.problem("error", "ITERATIVE_OPMODE", "Iterative OpMode loop requires state-machine review", self.classes[entry], entry)
-            self.actions.append(_unknown_action("Iterative loop repetition unknown"))
+            self.actions.append(_unknown_action("Iterative loop repetition unknown", self.source(self.classes[entry], entry)))
         return initial
 
 
@@ -921,6 +967,6 @@ def import_java(sources: dict[str, str], entry: str | None = None, options: dict
         if isinstance(start, Pose): result["start_pose"] = {"x": start.x, "y": start.y, "heading_rad": start.heading}
     except (ValueError, TypeError, ArithmeticError, RecursionError) as failure:
         interpreter.problem("error", "EXTRACTION_LIMIT", "Extraction stopped: " + str(failure))
-        interpreter.actions.append(_unknown_action("Extraction stopped before the full routine was resolved"))
+        interpreter.actions.append(_unknown_action("Extraction stopped before the full routine was resolved", interpreter.source(interpreter.classes[selected], selected)))
     result["actions"] = interpreter.actions
     return result

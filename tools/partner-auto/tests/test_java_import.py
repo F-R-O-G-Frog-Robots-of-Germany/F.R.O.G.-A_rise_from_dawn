@@ -5,6 +5,7 @@ import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from partner_auto.java_import import import_java
+from partner_auto.motion import build_profile
 
 REPO = Path(__file__).resolve().parents[3]
 
@@ -90,6 +91,124 @@ class JavaImportChecks(unittest.TestCase):
         result = import_java({"paste.java":source})
         self.assertFalse([x for x in result["diagnostics"] if x["severity"] == "error"])
         self.assertEqual(result["actions"][0]["path"]["points"],[[2,3],[2.5,4]])
+        self.assertEqual(result["actions"][0]["path"]["heading"]["type"], "constant")
+
+    def test_standalone_heading_setters_mutate_aliases_and_keep_prior_dispatches(self):
+        source = '''@Autonomous class Headings extends LinearOpMode {
+          void runOpMode() {
+            Path p = new Path(new BezierLine(new Point(10,10),new Point(30,10)));
+            Path alias = p;
+            alias.setConstantHeadingInterpolation(Math.PI / 2);
+            follower.followPath(p); while (follower.isBusy()) { follower.update(); }
+            p.setLinearHeadingInterpolation(0, Math.PI / 2);
+            follower.followPath(p); while (follower.isBusy()) { follower.update(); }
+            p.setReversed(true);
+            follower.followPath(p); while (follower.isBusy()) { follower.update(); }
+            p.setTangentHeadingInterpolation();
+            follower.followPath(p); while (follower.isBusy()) { follower.update(); }
+          }
+        }'''
+        result = import_java({"Headings.java": source})
+        self.assertFalse([d for d in result["diagnostics"] if d["severity"] == "error"])
+        headings = [action["path"]["heading"] for action in result["actions"]]
+        self.assertEqual([h["type"] for h in headings], ["constant", "linear", "tangent", "tangent"])
+        self.assertAlmostEqual(headings[0]["start_rad"], math.pi / 2)
+        self.assertAlmostEqual(headings[1]["end_rad"], math.pi / 2)
+        self.assertTrue(headings[2]["reverse"])
+        self.assertFalse(headings[3].get("reverse", False))
+        profile = build_profile(dict(result, actions=result["actions"][:1]), {
+            "robot_length_in": 30, "robot_width_in": 10, "clearance_in": 0})
+        self.assertEqual(profile["status"], "complete")
+        self.assertTrue(profile["timeline"][0]["samples"])
+        for sample in profile["timeline"][0]["samples"]:
+            self.assertAlmostEqual(sample["heading_rad"], math.pi / 2)
+        self.assertAlmostEqual(profile["timeline"][0]["end_pose"]["heading_rad"], math.pi / 2)
+
+    def test_pedro_builder_reversal_and_partial_linear_heading(self):
+        source = '''@Autonomous class Reversal extends LinearOpMode {
+          void runOpMode() {
+            PathChain p = follower.pathBuilder()
+              .addPath(new BezierLine(new Point(10,10),new Point(30,10))).setReversed(true)
+              .addPath(new BezierLine(new Point(30,10),new Point(50,10)))
+              .setLinearHeadingInterpolation(0,Math.PI/2,0.5).setReversed()
+              .addPath(new BezierLine(new Point(50,10),new Point(70,10)))
+              .setConstantHeadingInterpolation(Math.PI/2).setReversed().build();
+            follower.followPath(p); while (follower.isBusy()) { follower.update(); }
+          }
+        }'''
+        result = import_java({"Reversal.java": source})
+        self.assertFalse([d for d in result["diagnostics"] if d["severity"] == "error"])
+        children = result["actions"][0]["children"]
+        self.assertEqual(children[0]["path"]["heading"], {"type": "tangent", "reverse": True})
+        partial = children[1]["path"]["heading"]
+        self.assertEqual(partial["type"], "piecewise")
+        self.assertAlmostEqual(partial["segments"][0]["end_progress"], 0.5)
+        self.assertAlmostEqual(partial["segments"][0]["end_rad"], -math.pi / 2)
+        self.assertAlmostEqual(children[2]["path"]["heading"]["start_rad"], -math.pi / 2)
+        profile = build_profile(result)
+        self.assertEqual(profile["status"], "complete")
+        self.assertAlmostEqual(abs(profile["timeline"][1]["samples"][0]["heading_rad"]), math.pi)
+        self.assertAlmostEqual(profile["timeline"][2]["end_pose"]["heading_rad"], -math.pi / 2)
+
+    def test_unresolved_heading_mutations_never_keep_a_complete_schedule(self):
+        template = '''@Autonomous class Uncertain extends LinearOpMode { void runOpMode() {
+          Path p = new Path(new BezierLine(new Point(10,10),new Point(30,10)));
+          %s;
+          follower.followPath(p); while (follower.isBusy()) { follower.update(); }
+        }}'''
+        for setter in ("p.setConstantHeadingInterpolation(sensor.heading())",
+                       "p.setLinearHeadingInterpolation(0,Math.PI/2,0)",
+                       "p.setReversed(sensor.reversed())"):
+            with self.subTest(setter=setter):
+                result = import_java({"Uncertain.java": template % setter})
+                self.assertEqual(result["actions"][0]["kind"], "unknown")
+                self.assertEqual(result["actions"][0]["source"], {"file": "Uncertain.java", "line": 3})
+                errors = [d for d in result["diagnostics"] if d["severity"] == "error"]
+                self.assertTrue(errors)
+                self.assertEqual(errors[0]["source"], {"file": "Uncertain.java", "line": 3})
+                profile = build_profile(result)
+                self.assertEqual(profile["status"], "invalid")
+                self.assertIsNone(profile["summary"]["duration_max_s"])
+
+    def test_queued_path_retains_mutations_before_queue_execution(self):
+        source = '''abstract class General extends LinearOpMode {
+          abstract void build_autonomous();
+          void queue_path(Path path) {} void execute_shot() {}
+        }
+        @Autonomous class Queued extends General {
+          void build_autonomous() {
+            Path p = new Path(new BezierLine(new Point(10,10),new Point(30,10)));
+            queue_path(p);
+            p.setConstantHeadingInterpolation(Math.PI/2);
+          }
+        }'''
+        result = import_java({"Queued.java": source})
+        self.assertFalse([d for d in result["diagnostics"] if d["severity"] == "error"])
+        self.assertEqual(result["actions"][0]["path"]["heading"]["type"], "constant")
+        self.assertAlmostEqual(result["actions"][0]["path"]["heading"]["start_rad"], math.pi/2)
+
+    def test_queued_paths_cite_callsite_and_preserve_helper_definition(self):
+        result = import_java(self.sources, "FarMidPark")
+        action = next(a for a in result["actions"] if a["kind"] == "move")
+        route = next((name, text) for name, text in self.sources.items() if name.replace("\\", "/").endswith("/comp/FarMidPark.java"))
+        line = next(i for i, text in enumerate(route[1].splitlines(), 1) if "queue_intake_path(" in text)
+        self.assertEqual(action["source"], {"file": route[0], "line": line})
+        self.assertTrue(action["path_definition"]["source"]["file"].replace("\\", "/").endswith("/structure/AbstractAuto.java"))
+
+    def test_unresolved_nested_actions_retain_source_locations(self):
+        source = '''@Autonomous class Missing extends LinearOpMode {
+          void runOpMode() {
+            Actions.runBlocking(new SequentialAction(new MissingAction(), sensor.action()));
+          }
+        }'''
+        result = import_java({"Missing.java": source})
+        children = result["actions"][0]["children"]
+        self.assertEqual([a["kind"] for a in children], ["unknown", "unknown"])
+        self.assertEqual([a["source"] for a in children], [{"file": "Missing.java", "line": 3}] * 2)
+        profile = build_profile(result)
+        self.assertNotEqual(profile["status"], "complete")
+        self.assertTrue(all(event["source"] == {"file": "Missing.java", "line": 3}
+                            for event in profile["timeline"] if event["kind"] == "unknown"))
 
     def test_abstract_base_helpers_and_nonzero_hotfix(self):
         source = '''@Autonomous class Blue extends Base { boolean blue() { return true; } }

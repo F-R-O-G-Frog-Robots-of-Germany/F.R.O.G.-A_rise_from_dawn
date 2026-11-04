@@ -187,6 +187,7 @@ class _Reader:
         self.scale = 1.0
         self.wait_notice = False
         self.nodes = 0
+        self.dependent_path_count = 0
 
     def source(self, where: str) -> dict:
         return {"file": self.name, "location": where}
@@ -195,9 +196,11 @@ class _Reader:
         self.diagnostics.append({"severity": severity, "code": code, "message": message,
                                  "source": self.source(where)})
 
-    def unknown(self, code: str, message: str, where: str) -> dict:
-        self.issue(code, message, where)
+    def unknown(self, code: str, message: str, where: str, *, report: bool = True) -> dict:
+        if report:
+            self.issue(code, message, where)
         return {"kind": "unknown", "detail": message, "source": self.source(where),
+                "diagnostic_reported": True,
                 "duration": {"min_s": 0.0, "max_s": None, "basis": "unknown"}}
 
     def wait(self, raw: dict, position: str, where: str) -> dict | None:
@@ -260,8 +263,6 @@ class _Reader:
                     continue
                 if kind != "atomic":
                     raise _Invalid(f"Unsupported path kind {kind!r}")
-                if current is None:
-                    raise _Invalid("This path's declared origin is unknown because an earlier path is invalid")
                 end = _point(raw.get("endPoint"), location + ".endPoint", self.scale)
                 controls = raw.get("controlPoints", [])
                 through = raw.get("throughPoints", [])
@@ -269,17 +270,30 @@ class _Reader:
                     raise _Invalid("controlPoints and throughPoints must be lists")
                 if len(controls) > 50:
                     raise _Invalid("Bezier path has more than 50 control points")
+                if len(through) > 15:
+                    raise _Invalid("throughPoints has more than 15 interior points; interpolation is not supported")
+                # Validate independent fields even if an earlier error lost the origin.
+                # Otherwise one bad path would hide a later, unrelated schema error.
+                control_points = ([] if through else
+                                  [_point(p, location + ".controlPoints", self.scale) for p in controls])
+                through_points = [_point(p, location + ".throughPoints", self.scale) for p in through]
+                heading = _heading(raw.get("heading"), location + ".heading", self.scale,
+                                   raw.get("endPoint"))
+                if current is None:
+                    record.update(kind="invalid", leaf_end=len(self.leaves),
+                                  error="This path's declared origin is unknown because an earlier path is invalid")
+                    self.leaves.append(record)
+                    self.dependent_path_count += 1
+                    continue
                 if through and controls:
                     self.issue("THROUGH_OVERRIDES_CONTROLS", "throughPoints replaces controlPoints in Pedro; "
                                "the interpolating curve is retained.", location, "warning")
-                points = ([current] + [_point(p, location + ".throughPoints", self.scale) for p in through] + [end]
-                          if through else [current] + [_point(p, location + ".controlPoints", self.scale)
-                                                       for p in controls] + [end])
+                points = ([current] + through_points + [end]
+                          if through else [current] + control_points + [end])
                 if through:
                     points = _through_controls(points)
                 record.update(kind="atomic", points=points,
-                              heading=_heading(raw.get("heading"), location + ".heading", self.scale,
-                                               raw.get("endPoint")), length=_length(points))
+                              heading=heading, length=_length(points))
                 self.leaves.append(record)
                 record["leaf_end"] = len(self.leaves)
                 current = end
@@ -317,7 +331,10 @@ class _Reader:
     def emit_leaf(self, leaf: dict, current: list[float] | None) -> list[float] | None:
         where = leaf["where"]
         if leaf.get("kind") != "atomic":
-            self.actions.append(self.unknown("UNRESOLVED_PATH", leaf.get("error", "Invalid path"), where))
+            # walk() already reports the original schema error and summarizes paths
+            # affected by its missing origin. Keep the work without repeating errors.
+            self.actions.append(self.unknown("UNRESOLVED_PATH", leaf.get("error", "Invalid path"), where,
+                                             report=False))
             return None
         for group in leaf["ancestors"]:
             members = self.leaves[group["leaf_start"]:group["leaf_end"]]
@@ -390,6 +407,11 @@ class _Reader:
             if not isinstance(paths, list):
                 raise _Invalid("lines must be a list of Pedro paths")
             self.walk(paths, start, [], "lines")
+            if self.dependent_path_count:
+                self.issue("DEPENDENT_PATH_ORIGINS",
+                           f"{self.dependent_path_count} subsequent paths have unresolved origins because an earlier "
+                           "path is invalid. Their actions remain unknown; fix the original path error first.",
+                           "lines", "info")
             sequence = data.get("sequence")
             if sequence is not None and not isinstance(sequence, list):
                 raise _Invalid("sequence must be a list when present")
