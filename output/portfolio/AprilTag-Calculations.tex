@@ -1,0 +1,79 @@
+% Overleaf compiler: pdfLaTeX.
+% One 210 mm x 75 mm panel, about one quarter of an A4 page.
+\documentclass[border=0pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[mainfont]{Oswald}
+\usepackage{amsmath,xcolor,adjustbox}
+\usepackage{mathastext}
+
+\definecolor{panel}{HTML}{1E1E1E}
+\setlength{\fboxsep}{4mm}
+\setlength{\parindent}{0pt}
+\setlength{\jot}{2pt}
+\newcommand{\key}[2]{\noindent \(#1\)\enspace #2\par}
+
+\begin{document}
+\colorbox{panel}{%
+\begin{minipage}[t][67mm][t]{202mm}
+\color{white}
+\begin{adjustbox}{minipage=202mm,max totalsize={202mm}{67mm}}
+\raggedright
+{\large\bfseries AprilTag Pose from a Tilting Hive\par}
+{\small \(T\) tag, \(C\) camera, \(R\) robot.
+ \(T_{AB}\) maps points from \(B\) to \(A\).
+ \(R_{AB}\) is its rotation. Distances are in inches.\par}
+\medskip
+
+\begin{minipage}[t]{0.33\linewidth}
+\raggedright
+\textbf{1. Locate the hinge}\par
+\smallskip
+\(\begin{aligned}[t]
+T_{RT} &= T_{RC} T_{CT}\\
+h_R &= T_{RT}(d_T)\\
+u_R &= R_{RT}a_T
+\end{aligned}\)\par
+\smallskip
+\small
+\key{T_{CT},\ T_{RC}}{Limelight 3D tag pose and known camera mount.}
+\key{d_T,\ a_T}{Hinge point and signed axis in tag coordinates.}
+\key{h_R,\ u_R}{The same hinge point and axis in robot coordinates.}
+\end{minipage}\hfill
+%
+\begin{minipage}[t]{0.28\linewidth}
+\raggedright
+\textbf{2. Find heading}\par
+\smallskip
+\(\displaystyle\psi=-\operatorname{atan2}(u_{R,y},u_{R,x})\)\par
+\smallskip
+\small
+\key{\psi}{Robot heading in radians.}
+\key{u_{R,x},\ u_{R,y}}{Forward and left components of the hinge axis.}
+Robot roll and pitch are set to \(0^\circ\).
+The signed hinge axis points along field \(+X\).
+\end{minipage}\hfill
+%
+\begin{minipage}[t]{0.34\linewidth}
+\raggedright
+\textbf{3. Find field position}\par
+\smallskip
+{\setlength{\fboxsep}{3pt}%
+\(\boxed{p_{xy}=H_{xy}-R_2(\psi)\,h_{R,xy}}\)}\par
+\smallskip
+\small
+\key{p_{xy},\ H_{xy}}{Robot and fixed hinge positions on the field.}
+\key{h_{R,xy}}{Robot-to-hinge offset in the robot's horizontal plane.}
+\key{R_2(\psi)}{2D rotation by the robot heading.}
+\end{minipage}\par
+
+\medskip
+{\small\textbf{Synthetic check at \(+30^\circ\) Hive tilt}\par
+ \(h_{R,xy}=(47.32,-20)+(-17.32,0)=(30,-20)\), \quad
+ \(u_{R,xy}=(0,-1)\Rightarrow\psi=90^\circ\), \quad
+ \(p_{xy}=(60,0)-(20,30)=(40,-30)\).\par
+ At \(-30^\circ\), \(0^\circ\) and \(+30^\circ\), the synthetic test recovers
+ the same robot pose.\par}
+\end{adjustbox}
+\end{minipage}%
+}
+\end{document}

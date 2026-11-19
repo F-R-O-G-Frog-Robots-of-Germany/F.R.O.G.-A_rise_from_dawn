@@ -1,0 +1,97 @@
+% Compile with pdfLaTeX in Overleaf.
+\documentclass[11pt]{article}
+\usepackage[paperwidth=297mm,paperheight=95mm,margin=12mm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[mainfont]{Oswald}
+\usepackage{amsmath,tabularx,xcolor}
+
+\definecolor{panel}{HTML}{1E1E1E}
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\jot}{6pt}
+\renewcommand{\arraystretch}{1.24}
+
+% Use the document font for Latin variables and operator names.
+\newcommand{\vname}[1]{\text{#1}}
+\newcommand{\sine}{\mathop{\vname{sin}}\nolimits}
+\newcommand{\cosine}{\mathop{\vname{cos}}\nolimits}
+\newcommand{\tangent}{\mathop{\vname{tan}}\nolimits}
+
+\begin{document}
+\pagecolor{panel}
+\color{white}
+
+\begin{minipage}[t]{0.28\linewidth}
+  \begin{minipage}[c][32mm][c]{\linewidth}
+    \large
+    \(\displaystyle
+    \begin{aligned}
+      \vname{f}_{\vname{c}}
+        &= \frac{\vname{h}}{\tangent(\alpha-\vname{t}_{\vname{y}})},\\
+      \ell_{\vname{c}}
+        &= -\frac{\vname{h}\,\tangent(\vname{t}_{\vname{x}})}
+          {\sine\alpha-\tangent(\vname{t}_{\vname{y}})\cosine\alpha}.
+    \end{aligned}
+    \)\par
+    \smallskip
+    \(\lvert\vname{t}_{\vname{x}}\rvert \le 27.25^\circ,\qquad
+      \lvert\vname{t}_{\vname{y}}\rvert \le 21^\circ\)
+  \end{minipage}\par
+  \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X@{}}
+    \(\vname{t}_{\vname{x}},\,\vname{t}_{\vname{y}}\)
+      & Limelight 3A angles from the optical axis, positive right and up.
+        Readings outside the bounds are discarded. \\
+    \(\vname{h},\,\alpha\) & Lens height above the floor and downward camera pitch. \\
+    \(\vname{f}_{\vname{c}},\,\ell_{\vname{c}}\)
+      & Forward and leftward distances from the camera. \\
+  \end{tabularx}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.34\linewidth}
+  \begin{minipage}[c][32mm][c]{\linewidth}
+    \large
+    \(\displaystyle
+    \begin{bmatrix}\vname{f}_{\vname{r}}\\ \ell_{\vname{r}}\end{bmatrix}
+    =
+    \begin{bmatrix}\vname{d}_{\vname{f}}\\ \vname{d}_{\ell}\end{bmatrix}
+    +
+    \begin{bmatrix}
+      \cosine\psi & -\sine\psi\\
+      \sine\psi   & \cosine\psi
+    \end{bmatrix}
+    \begin{bmatrix}\vname{f}_{\vname{c}}\\ \ell_{\vname{c}}\end{bmatrix}.
+    \)
+  \end{minipage}\par
+  \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X@{}}
+    \(\vname{d}_{\vname{f}},\,\vname{d}_{\ell}\)
+      & Forward and leftward camera offsets from the robot's pose reference. \\
+    \(\psi\) & Camera mounting yaw, positive counterclockwise from robot forward. \\
+    \(\vname{f}_{\vname{r}},\,\ell_{\vname{r}}\)
+      & Forward and leftward distances from the robot's pose reference. \\
+  \end{tabularx}
+\end{minipage}\hfill
+\begin{minipage}[t]{0.31\linewidth}
+  \begin{minipage}[c][32mm][c]{\linewidth}
+    \large
+    \setlength{\fboxsep}{5pt}
+    \(\displaystyle
+    \boxed{\begin{aligned}
+      \vname{x}_{\vname{p}} &= \vname{x}_{\vname{r}}
+        + \vname{f}_{\vname{r}}\cosine\theta
+        - \ell_{\vname{r}}\sine\theta,\\
+      \vname{y}_{\vname{p}} &= \vname{y}_{\vname{r}}
+        + \vname{f}_{\vname{r}}\sine\theta
+        + \ell_{\vname{r}}\cosine\theta.
+    \end{aligned}}
+    \)
+  \end{minipage}\par
+  \begin{tabularx}{\linewidth}{@{}l >{\raggedright\arraybackslash}X@{}}
+    \(\vname{x}_{\vname{r}},\,\vname{y}_{\vname{r}}\)
+      & Robot position in field coordinates. \\
+    \(\theta\) & Robot heading, positive counterclockwise from the field's
+      positive \(\vname{x}\)-axis. \\
+    \(\vname{x}_{\vname{p}},\,\vname{y}_{\vname{p}}\)
+      & Calculated game piece position in field coordinates. \\
+  \end{tabularx}
+\end{minipage}
+
+\end{document}
