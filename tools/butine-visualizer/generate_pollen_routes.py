@@ -105,6 +105,60 @@ def clear_point(x: float, y: float, geometry: dict) -> bool:
     return True
 
 
+def partner_corridor(profile: dict, field_size: float, box_budget: int) -> list[tuple[float, float, float, float]]:
+    """Cover the complete partner corridor with boxes the Java router can handle."""
+    if not isinstance(profile, dict) or profile.get("schema_version") != "1.0" or profile.get("status") != "complete":
+        raise ValueError("Butine needs a complete partner profile from the importer.")
+    settings = profile.get("settings")
+    if not isinstance(settings, dict) or settings.get("field_size_in") != field_size:
+        raise ValueError(f"The partner profile must use the {field_size:g}-inch field.")
+    reservations = profile.get("reservations")
+    if not isinstance(reservations, list) or not reservations:
+        raise ValueError("The partner profile has no occupancy reservations.")
+
+    bounds = []
+    for reservation in reservations:
+        box = reservation.get("bounds") if isinstance(reservation, dict) else None
+        values = [box.get(key) for key in ("min_x", "max_x", "min_y", "max_y")] if isinstance(box, dict) else []
+        if len(values) != 4 or not all(type(value) in (int, float) and abs(value) <= sys.float_info.max for value in values):
+            raise ValueError("The partner profile contains invalid occupancy bounds.")
+        left, right, bottom, top = values
+        if left >= right or bottom >= top:
+            raise ValueError("The partner profile contains empty or reversed occupancy bounds.")
+        if right > 0 and left < field_size and top > 0 and bottom < field_size:
+            bounds.append((left, right, bottom, top))
+    if not bounds:
+        raise ValueError("The partner profile has no occupancy inside the field.")
+
+    for divisions in (24, 12, 6, 1):
+        step = field_size / divisions
+        occupied = [set() for _ in range(divisions)]
+        for left, right, bottom, top in bounds:
+            low_x = max(0, math.floor(left / step))
+            high_x = min(divisions, math.ceil(right / step))
+            columns = range(low_x, high_x)
+            for y in range(max(0, math.floor(bottom / step)), min(divisions, math.ceil(top / step))):
+                occupied[y].update(columns)
+
+        # Join adjacent rows with identical occupied spans while keeping gaps open.
+        boxes, open_spans = [], {}
+        for y, row in enumerate(occupied + [set()]):
+            spans = {}
+            for x in range(divisions):
+                if x in row and x - 1 not in row:
+                    end = x + 1
+                    while end in row:
+                        end += 1
+                    spans[x, end] = open_spans.get((x, end), y)
+            for (start, end), first_row in open_spans.items():
+                if (start, end) not in spans:
+                    boxes.append((start * step, end * step, first_row * step, y * step))
+            open_spans = spans
+        if len(boxes) <= box_budget:
+            return boxes
+    raise ValueError("The Butine field has no room for partner obstacles.")
+
+
 def generate_map(seed: int, geometry: dict) -> list[dict]:
     generator = random.Random(seed)
     size = geometry["config"]["fieldSizeIn"]
@@ -185,10 +239,13 @@ def make_project(plan: dict, eligible: list[dict], seed: int) -> dict:
     shapes = [polygon_marker(point) for point in eligible]
     for obstacle in plan["obstacles"]:
         box = obstacle["physical"]
-        shapes.append({"id": f"field-obstacle-{obstacle['index']}", "name": f"Physical field obstacle {obstacle['index'] + 1}",
+        partner = obstacle.get("partner", False)
+        label = "Partner corridor" if partner else "Physical field obstacle"
+        color = "#d97706" if partner else "#64748b"
+        shapes.append({"id": f"field-obstacle-{obstacle['index']}", "name": f"{label} {obstacle['index'] + 1}",
                        "vertices": [{"x": box["minX"], "y": box["minY"]}, {"x": box["maxX"], "y": box["minY"]},
                                     {"x": box["maxX"], "y": box["maxY"]}, {"x": box["minX"], "y": box["maxY"]}],
-                       "color": "#64748b", "fillColor": "#64748b", "type": "obstacle", "visible": True, "locked": True})
+                       "color": color, "fillColor": color, "type": "obstacle", "visible": True, "locked": True})
     start = plan["start"]
     start_deg = math.degrees(start["heading"])
     return {"version": "1.5.0", "startPoint": {"x": start["x"], "y": start["y"], "headingDeg": start_deg,
@@ -274,6 +331,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="Continue collection this many inches beyond the last intake contact (default: production Java setting, 1 inch).")
     parser.add_argument("--depot", nargs=3, type=float, default=(59.25, 18, 90), metavar=("X", "Y", "DEGREES"))
     parser.add_argument("--start", nargs=3, type=float, metavar=("X", "Y", "DEGREES"), help="Defaults to the depot.")
+    parser.add_argument("--partner-profile", type=Path, help="Reserve the corridor from a complete partner-auto JSON profile.")
     parser.add_argument("--pedro-jar", type=Path, help="Override the project's cached Pedro core 3.0.1 JAR.")
     parser.add_argument("--java", help="Java executable override.")
     parser.add_argument("--javac", help="Java compiler executable override.")
@@ -297,6 +355,11 @@ def main(argv: list[str] | None = None) -> int:
         jar = find_pedro_jar(args.pedro_jar)
         classes = compile_bridge(javac, jar)
         geometry = invoke_bridge(java, classes, jar, "--describe-field")
+        boxes = []
+        if args.partner_profile is not None:
+            profile = json.loads(args.partner_profile.read_text(encoding="utf-8-sig"))
+            boxes = partner_corridor(profile, geometry["config"]["fieldSizeIn"],
+                                     geometry["config"]["maxBoxes"] - len(geometry["obstacles"]))
         intake_overshoot = geometry["config"]["intakeOvershootIn"] if args.intake_overshoot is None else args.intake_overshoot
         points = generate_map(seed, geometry)
         eligible = [point for point in points if point["x"] < 72]
@@ -311,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
             values += (intake_overshoot,)
             rows = ["CONFIG\t" + "\t".join(map(str, values))]
             rows.extend(f"POLLEN\t{point['id']}\t{point['x']}\t{point['y']}" for point in eligible)
+            rows.extend("PARTNER\t" + "\t".join(map(str, box)) for box in boxes)
             source.write_text("\n".join(rows) + "\n", encoding="utf-8")
             plan = invoke_bridge(java, classes, jar, str(source))
         validate_plan(plan, eligible)
@@ -323,6 +387,8 @@ def main(argv: list[str] | None = None) -> int:
         plan_path.write_text(json.dumps(plan, indent=2, allow_nan=False) + "\n", encoding="utf-8")
         print(f"Seed {seed}: generated 40 pollen (20 per side); discarded 20 BLUE-side targets.")
         print(f"Java planned {plan['diagnostics']['totalCollected']}/20 RED pollen in {len(plan['runs'])} trips; maximum load 4.")
+        if boxes:
+            print(f"Reserved the partner corridor for the whole test ({len(boxes)} boxes).")
         print(f"Front intake: {args.intake_width:g} inches wide, {args.intake_forward_offset:g} inches ahead of robot center; {intake_overshoot:g}-inch collection overshoot.")
         print(f"Estimated travel/scoring: {plan['diagnostics']['totalCommittedTimeS']:.2f}/{args.seconds:g} seconds.")
         print(f"Pedro project: {output}\nMap: {map_path}\nJava trace: {plan_path}")

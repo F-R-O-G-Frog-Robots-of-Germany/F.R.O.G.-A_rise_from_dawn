@@ -46,6 +46,7 @@ public final class ButineVisualizerBridge {
         double intakeOvershootIn = new Butine.Params().intakeOvershootIn;
         int seed;
         final List<Pollen> pollen = new ArrayList<>();
+        final List<ButineField.Box> partnerBoxes = new ArrayList<>();
     }
 
     private static final class ExecutedRun {
@@ -114,8 +115,16 @@ public final class ButineVisualizerBridge {
                 lineNumber++;
                 if (line.trim().isEmpty()) continue;
                 String[] columns = line.split("\t", -1);
+                if (columns.length == 5 && "PARTNER".equals(columns[0])) {
+                    if (input.partnerBoxes.size() >= ButineField.MAX_BOXES - ButineField.biobuzz().box_count())
+                        throw new IllegalArgumentException("Too many partner corridor boxes");
+                    input.partnerBoxes.add(new ButineField.Box(number(columns[1], "partner min X"),
+                            number(columns[2], "partner max X"), number(columns[3], "partner min Y"),
+                            number(columns[4], "partner max Y")));
+                    continue;
+                }
                 if (columns.length != 4 || !"POLLEN".equals(columns[0]))
-                    throw new IllegalArgumentException("Line " + lineNumber + " must be POLLEN, ID, X and Y separated by tabs");
+                    throw new IllegalArgumentException("Invalid POLLEN or PARTNER row on line " + lineNumber);
                 int id = Integer.parseInt(columns[1]);
                 if (!ids.add(id)) throw new IllegalArgumentException("Duplicate pollen ID " + id);
                 double x = number(columns[2], "pollen X on line " + lineNumber);
@@ -136,10 +145,21 @@ public final class ButineVisualizerBridge {
         if (defaults.capacity != CAPACITY) {
             throw new IllegalStateException("Production Butine.Params.capacity must be 4; found " + defaults.capacity);
         }
-        ButineField field = ButineField.biobuzz();
-        if (defaults.field != field) throw new IllegalStateException("Production default field is not nominal BIOBUZZ");
+        ButineField base = ButineField.biobuzz();
+        if (defaults.field != base) throw new IllegalStateException("Production default field is not nominal BIOBUZZ");
+        ButineField field = base;
+        if (!input.partnerBoxes.isEmpty()) {
+            ButineField.Box[] boxes = new ButineField.Box[base.box_count() + input.partnerBoxes.size()];
+            for (int i = 0; i < base.box_count(); i++) boxes[i] = base.physical_box(i);
+            for (int i = 0; i < input.partnerBoxes.size(); i++) boxes[base.box_count() + i] = input.partnerBoxes.get(i);
+            // Partner bounds already include their body. ButineField adds our robot envelope.
+            field = new ButineField(base.fieldSizeIn, base.robotLengthIn, base.robotWidthIn,
+                    base.bodyClearanceIn, base.fieldReserveIn, base.trackingReserveIn, boxes);
+        }
         if (!field.is_clear(input.start) || !field.is_clear(input.depot))
-            throw new IllegalArgumentException("Start or depot violates the production robot-envelope geometry");
+            throw new IllegalArgumentException(base.is_clear(input.start) && base.is_clear(input.depot)
+                    ? "The partner corridor blocks the start or depot. Choose a position outside the corridor."
+                    : "Start or depot violates the production robot-envelope geometry");
         if (field.route(input.start, input.depot) == null)
             throw new IllegalArgumentException("Start has no safe route to the depot");
         ArrayList<Pollen> remainingPollen = new ArrayList<>(input.pollen);
@@ -152,6 +172,7 @@ public final class ButineVisualizerBridge {
             if (remainingS <= 0) { stopReason = "remaining time exhausted"; break; }
             if (executed.size() >= MAX_RED_POLLEN) throw new IllegalStateException("Receding-horizon iteration bound exceeded");
             Butine.Params params = new Butine.Params(defaults);
+            params.field = field;
             params.remainingS = remainingS;
             params.scoreOverheadS = input.scoreOverheadS;
             params.seed = input.seed;
@@ -348,6 +369,7 @@ public final class ButineVisualizerBridge {
             if (i > 0) json.append(',');
             json.append("{\"index\":").append(i).append(",\"physical\":"); box(json, field.physical_box(i));
             json.append(",\"exclusion\":"); box(json, field.exclusion_box(i));
+            if (i >= field.box_count() - input.partnerBoxes.size()) json.append(",\"partner\":true");
             json.append('}');
         }
         json.append("],\"eligiblePollen\":[");
@@ -427,7 +449,8 @@ public final class ButineVisualizerBridge {
         ButineField field = ButineField.biobuzz();
         StringBuilder json = new StringBuilder(2048);
         json.append("{\"config\":{\"productionDefaultCapacity\":").append(defaults.capacity)
-                .append(",\"capacity\":").append(CAPACITY);
+                .append(",\"capacity\":").append(CAPACITY)
+                .append(",\"maxBoxes\":").append(ButineField.MAX_BOXES);
         property(json, "fieldSizeIn", field.fieldSizeIn);
         property(json, "robotLengthIn", field.robotLengthIn);
         property(json, "robotWidthIn", field.robotWidthIn);

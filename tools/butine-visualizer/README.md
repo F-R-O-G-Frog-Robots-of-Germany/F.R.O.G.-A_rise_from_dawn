@@ -16,6 +16,16 @@ python tools/butine-visualizer/generate_pollen_routes.py --seed 20261019 --outpu
 
 Omit `--seed` to get a new random map each time. The script prints the seed so the map can be recreated. Run it from another directory by passing the full script path; source and Java-cache paths are resolved relative to the script, not the current directory.
 
+## Test with a partner profile
+
+Export a complete profile from the [partner importer](../partner-auto/README.md), then pass its JSON to the desktop planner:
+
+```powershell
+python tools/butine-visualizer/generate_pollen_routes.py --partner-profile build/partner-auto/red-partner.json --seconds 30 --seed 20261019 --depot 40 18 90 --output build/butine-visualizer/with-partner.pp
+```
+
+Use the same 144-inch field coordinates for both robots. The generator reserves the union of the partner's predicted occupied areas for the entire test. It rounds the bounds outward to fit the router's obstacle limit. Butine adds its own robot clearance and can detour, leave pickups uncollected, or reject a blocked start or depot. Orange shapes mark the reserved partner corridor in the `.pp` export. The plan JSON records the full exclusion bounds. Run the same seed without `--partner-profile` to compare the routes with the same game-piece positions.
+
 ## What the file shows
 
 - Exactly 40 pollen positions are generated, with 20 on each half. RED is the audience-view left half, `x < 72`; Y spans the field. All generated positions are within the field clearance model and do not overlap other pollen markers. A pollen position can still be unreachable by the configured front intake at a particular robot heading; these pollen remain visible and uncollected.
