@@ -31,6 +31,7 @@ public final class Limelight {
         public final boolean botposeValid;
         public final double tx;
         public final double ty;
+        public final double tyNoCrosshair;
         public final double ta;
         /** Raw Limelight field-centre coordinates, meters and degrees. */
         public final double x;
@@ -47,7 +48,7 @@ public final class Limelight {
         public final long stalenessMs;
         private final VisionPose pose;
 
-        private Result(boolean valid, double tx, double ty, double ta,
+        private Result(boolean valid, double tx, double ty, double tyNoCrosshair, double ta,
                        VisionPose pose, double x, double y, double yaw,
                        double captureLatency, double targetingLatency, double parseLatency,
                        double temp, double cpu, double fps, int pipelineIndex,
@@ -55,6 +56,7 @@ public final class Limelight {
             this.valid = valid;
             this.tx = tx;
             this.ty = ty;
+            this.tyNoCrosshair = tyNoCrosshair;
             this.ta = ta;
             this.pose = pose;
             this.botposeValid = pose != null;
@@ -216,11 +218,11 @@ public final class Limelight {
             double targetingLatency = result.getTargetingLatency();
             double parseLatency = result.getParseLatency();
             lastResult = new Result(valid, valid ? result.getTx() : 0,
-                    valid ? result.getTy() : 0, valid ? result.getTa() : 0,
+                    valid ? result.getTy() : 0, valid ? result.getTyNC() : 0, valid ? result.getTa() : 0,
                     tagPose, rawX, rawY, rawYaw, captureLatency, targetingLatency,
                     parseLatency, temperature, cpu, fps, actualPipeline, result.getTimestamp(), age);
             if (!fresh || !correctPipeline || selectedPipeline != DETECTOR_PIPELINE) return;
-            // Invalid localization must not sweep a wedge at an invented robot pose.
+            // Invalid localization must not clear the map at an invented robot pose.
             if (pose == null || !pose.is_finite() || poseStamp < 0
                     || now < poseStamp || now - poseStamp > maxPoseAgeMs) return;
             double timestamp = result.getTimestamp();
@@ -239,7 +241,7 @@ public final class Limelight {
             if (!Double.isFinite(latency) || captureLatency < 0 || targetingLatency < 0
                     || parseLatency < 0 || latency > MAX_LATENCY_MS
                     || !Double.isFinite(confidenceScale) || confidenceScale <= 0
-                    || !valid_calibration()) return;
+                    || !calibration.has_valid_mounting()) return;
             ArrayList<Pollen> detections = new ArrayList<>();
             List<LLResultTypes.DetectorResult> detectorResults = result.getDetectorResults();
             int count = Math.min(detectorResults == null ? 0 : detectorResults.size(), MAX_DETECTIONS);
@@ -251,8 +253,8 @@ public final class Limelight {
                 double area = detection.getTargetArea();
                 if (!Double.isFinite(confidence) || confidence < 0 || confidence > 1
                         || !Double.isFinite(area) || area < 0) continue;
-                VisionPose position = calibration.project(detection.getTargetXDegrees(),
-                        detection.getTargetYDegrees(), pose);
+                VisionPose position = calibration.project(detection.getTargetXDegreesNoCrosshair(),
+                        detection.getTargetYDegreesNoCrosshair(), pose);
                 if (position != null) detections.add(new Pollen(-1, position, confidence, area, now));
             }
             currentFrame = Collections.unmodifiableList(detections);
@@ -382,14 +384,8 @@ public final class Limelight {
     }
 
     private Result empty_result() {
-        return new Result(false, 0, 0, 0, null, 0, 0, 0,
+        return new Result(false, 0, 0, 0, 0, null, 0, 0, 0,
                 0, 0, 0, temperature, cpu, fps, -1, 0, 0);
-    }
-
-    private boolean valid_calibration() {
-        return !calibration.usePinholeRange || (Double.isFinite(calibration.cameraHeightIn)
-                && calibration.cameraHeightIn > 0 && Double.isFinite(calibration.cameraPitchDeg)
-                && calibration.cameraPitchDeg >= 0 && calibration.cameraPitchDeg < 90);
     }
 
     /** Remaining cached-frame validity for immutable worker snapshots; no SDK calls. */

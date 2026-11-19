@@ -277,8 +277,8 @@ public final class CompetitionWorkersAudit {
             require(!s.workers.request_collection(START, parameters(), 1), "cached pre-reset frame cannot start collection");
             s.device.next_frame();
             service_until(s, () -> s.workers.ready() && s.map.size() > 0, "new actual frame rebuilds map in reset origin");
-            require(Math.abs(s.map.snapshot().get(0).position.x - 56) < 1e-9,
-                    "recovered map uses new30inch pose plus26inch observation");
+            require(Math.abs(s.map.snapshot().get(0).position.x - 58) < 1e-9,
+                    "recovered map uses new30inch pose plus28inch observation");
         } finally { s.close(); }
     }
 
@@ -296,8 +296,8 @@ public final class CompetitionWorkersAudit {
             s.device.next_frame(); s.device.release();
             service_until(s, () -> s.workers.ready() && !s.workers.owns_drive(),
                     "new detector publication restores readiness after correction settling");
-            require(s.map.size() > 0 && Math.abs(s.map.snapshot().get(0).position.x - 51) < 1e-9,
-                    "new mapped target uses corrected25inch origin plus26inch observation");
+            require(s.map.size() > 0 && Math.abs(s.map.snapshot().get(0).position.x - 53) < 1e-9,
+                    "new mapped target uses corrected25inch origin plus28inch observation");
         } finally { s.close(); }
     }
 

@@ -33,10 +33,22 @@ public final class CameraFrameAudit {
     static void frame_matrix(){
         Limelight3A device=new Limelight3A();HardwareMap hardware=new HardwareMap();hardware.device=device;
         Limelight camera=new Limelight(hardware);camera.init(); PollenMap map=new PollenMap(camera);
-        LLResult first=frame(9000,1);first.detectors.add(new LLResultTypes.DetectorResult());device.result=first;
+        LLResult first=frame(9000,1);
+        LLResultTypes.DetectorResult inView = new LLResultTypes.DetectorResult();
+        inView.tx = 35;
+        inView.ty = 0;
+        first.detectors.add(inView);
+        LLResultTypes.DetectorResult outsideHorizontal = new LLResultTypes.DetectorResult();
+        outsideHorizontal.txNoCrosshair = 28;
+        first.detectors.add(outsideHorizontal);
+        LLResultTypes.DetectorResult outsideVertical = new LLResultTypes.DetectorResult();
+        outsideVertical.tyNoCrosshair = -22;
+        first.detectors.add(outsideVertical);
+        device.result=first;
         camera.update(POSE);map.update();long sequence=camera.pollen_frame_sequence();
-        require(camera.get_pollen().size()==1&&Math.abs(camera.get_pollen().get(0).confidence-.83984375)<1e-12,"JSON confidence remains fraction");
-        require(map.snapshot().size()==1&&Math.abs(map.snapshot().get(0).position.x-46)<1e-9,"default range26 creates field46,20");
+        require(camera.get_pollen().size()==1,"Only optical-axis angles inside the 3A field of view are accepted");
+        require(Math.abs(camera.get_pollen().get(0).confidence-.83984375)<1e-12,"JSON confidence remains fraction");
+        require(map.snapshot().size()==1&&Math.abs(map.snapshot().get(0).position.x-48)<1e-9,"default range28 creates field48,20");
         camera.update(POSE);require(camera.pollen_frame_sequence()==sequence,"same object repeat ignored");
         device.result=frame(9000,2);camera.update(POSE);require(camera.pollen_frame_sequence()==sequence,"same camera timestamp new receipt ignored");
         LLResult stale=frame(9001,3);stale.age=251;device.result=stale;camera.update(POSE);map.update();
@@ -64,7 +76,7 @@ public final class CameraFrameAudit {
         LLResult delayed=frame(2,2);delayed.capture=125;delayed.targeting=20;delayed.parse=5;delayed.age=10;
         delayed.detectors.add(new LLResultTypes.DetectorResult());device.result=delayed;camera.update(current);
         VisionPose projected=camera.get_pollen().get(0).position;
-        require(Math.abs(projected.x-50)<1e-9&&Math.abs(projected.y-66)<1e-9,
+        require(Math.abs(projected.x-50)<1e-9&&Math.abs(projected.y-68)<1e-9,
                 "delayed detector result uses current supplied translation and heading without rewind");
         require(camera.pollen_frame_pose()==current,"detector metadata retains the same supplied current pose");
         require(camera.get_result().captureLatency==125&&camera.get_result().targetingLatency==20
@@ -87,7 +99,7 @@ public final class CameraFrameAudit {
         camera.update(POSE);require(Math.abs(camera.get_pose().x-111.37007874015748)<1e-9&&Math.abs(camera.get_pose().y-32.62992125984252)<1e-9,"meter/corner conversion");
         require(Math.abs(camera.get_pose().heading-Math.PI/2)<1e-12,"yaw degrees to radians");
         camera.set_pipeline(0);PollenMap map=new PollenMap(camera);map.inject(new VisionPose(35,20,0));map.inject(new VisionPose(50,20,0));
-        camera.calibration.usePinholeRange=true;camera.calibration.cameraHeightIn=10;camera.calibration.cameraPitchDeg=0;
+        camera.calibration.cameraHeightIn=10;camera.calibration.cameraPitchDeg=0;
         device.result=frame(2,2);camera.update(POSE);map.update();
         require(map.snapshot().size()==1&&Math.abs(map.snapshot().get(0).position.x-35)<1e-9,"vertical FOV protects unseen15inch floor but clears visible30inch floor");
         long sequence=camera.pollen_frame_sequence();camera.calibration.cameraHeightIn=Double.NaN;device.result=frame(3,3);camera.update(POSE);

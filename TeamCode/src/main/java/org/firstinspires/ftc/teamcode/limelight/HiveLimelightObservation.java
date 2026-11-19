@@ -103,6 +103,7 @@ public final class HiveLimelightObservation {
      * Copies usable individual tag poses from one frame. The caller still owns frame identity,
      * freshness checks, clock alignment and the decision whether an observation is accepted.
      * Malformed individual poses are skipped; unknown tag IDs are left for the geometry lookup.
+     * Pass the returned list to HivePoseEstimator.estimate_frame for a same-exposure pose consensus.
      */
     public static List<HivePoseEstimator.Observation> from_result(
             LLResult result, long captureTimeMs) {

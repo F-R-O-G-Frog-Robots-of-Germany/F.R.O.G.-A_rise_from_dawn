@@ -21,21 +21,21 @@ public final class VisionChecks {
     private static void authoritative_frames() {
         PollenMap map = new PollenMap();
         VisionPose robot = new VisionPose(20, 20, 0);
-        int visible = map.inject(new VisionPose(40, 20, 0));
+        int visible = map.inject(new VisionPose(48, 20, 0));
         int outside = map.inject(new VisionPose(20, 60, 0));
         map.update(Collections.emptyList(), robot, 0);
         require(map.snapshot().size() == 2, "No analyzed frame must preserve injected tracks");
         map.update(Collections.emptyList(), robot, 1);
         require(!contains(map.snapshot(), visible), "Analyzed empty frame clears visible pollen");
-        require(contains(map.snapshot(), outside), "Empty frame preserves pollen outside its wedge");
-        int later = map.inject(new VisionPose(40, 20, 0));
+        require(contains(map.snapshot(), outside), "Empty frame preserves pollen outside its frustum");
+        int later = map.inject(new VisionPose(48, 20, 0));
         map.update(Collections.emptyList(), robot, 1);
         require(contains(map.snapshot(), later), "Repeated empty frame provides no negative evidence");
         require(map.stats().framesProcessed == 1 && map.stats().framesSkipped == 1,
                 "Only new detector sequences count as processed frames");
         map.update(Collections.emptyList(), new VisionPose(20, 20, Math.PI / 2), 2);
         require(!contains(map.snapshot(), outside) && contains(map.snapshot(), later),
-                "A changed capture heading clears the newly observed wedge only");
+                "A changed capture heading clears the newly visible floor only");
         PollenMap bound = new PollenMap(new Limelight());
         bound.inject(new VisionPose(40, 20, 0));
         bound.update();
@@ -45,18 +45,18 @@ public final class VisionChecks {
     private static void stable_ids_and_boundaries() {
         PollenMap map = new PollenMap();
         VisionPose robot = new VisionPose(20, 20, 0);
-        int id = map.inject(new VisionPose(40, 20, 0));
-        map.update(Collections.singletonList(observation(41, 20)), robot, 1);
+        int id = map.inject(new VisionPose(47, 20, 0));
+        map.update(Collections.singletonList(observation(48, 20)), robot, 1);
         require(map.snapshot().size() == 1 && map.snapshot().get(0).id == id,
                 "A refreshed observation retains the nearest cleared id");
         require(map.tracks().get(0).sightings == 2, "Sightings survive id reuse");
-        map.update(Arrays.asList(observation(45, 20), observation(50, 20)), robot, 2);
+        map.update(Arrays.asList(observation(52, 20), observation(57, 20)), robot, 2);
         List<Pollen> snapshot = map.snapshot();
         require(snapshot.size() == 2 && snapshot.get(0).id != snapshot.get(1).id,
                 "Separate detections cannot receive the same cleared id");
         require(map.remove(snapshot.get(0).id) && !map.remove(snapshot.get(0).id),
                 "Collection removes exactly its stable id");
-        require(map.mark_collected(50, 20, 2) == 1, "Collection radius removes pollen below camera range");
+        require(map.mark_collected(57, 20, 2) == 1, "Collection radius removes the remaining track");
 
         PollenMap edge = new PollenMap();
         int edgeId = edge.inject(new VisionPose(29, 20, 0));
@@ -67,7 +67,7 @@ public final class VisionChecks {
 
     private static void invalid_data() {
         PollenMap map = new PollenMap();
-        map.inject(new VisionPose(40, 20, 0));
+        map.inject(new VisionPose(48, 20, 0));
         map.update(Collections.emptyList(), new VisionPose(Double.NaN, 20, 0), 1);
         require(map.snapshot().size() == 1, "Invalid capture pose must never sweep the map");
         map.config.hfovDeg = Double.NaN;
@@ -102,23 +102,29 @@ public final class VisionChecks {
 
     private static void calibration() {
         LimelightCalibration calibration = new LimelightCalibration();
-        close(calibration.forward_distance(-LimelightGeometry.VERTICAL_FOV_DEG / 2), 8,
-                "Placeholder bottom-frame range");
-        close(calibration.forward_distance(LimelightGeometry.VERTICAL_FOV_DEG / 2), 60,
-                "Placeholder top-frame range");
         require(Double.isNaN(calibration.forward_distance(Double.NaN)), "NaN ray is rejected");
-        calibration.usePinholeRange = true;
         calibration.cameraHeightIn = 10;
         calibration.cameraPitchDeg = 30;
         close(calibration.forward_distance(0), 10 / Math.tan(Math.toRadians(30)),
                 "Measured height and downward pitch provide flat-floor distance");
-        require(Double.isNaN(calibration.forward_distance(30)), "Horizon ray has no forward floor point");
+        for (double sign : new double[]{-1, 1}) {
+            require(calibration.project(sign * 27.25, sign * 21, VisionPose.ZERO) != null,
+                    "Limelight 3A field-of-view edges are inclusive");
+            require(calibration.project(sign * 27.26, 0, VisionPose.ZERO) == null,
+                    "Horizontal angles outside the 3A field of view are rejected");
+            require(calibration.project(0, sign * 21.01, VisionPose.ZERO) == null
+                            && Double.isNaN(calibration.forward_distance(sign * 21.01)),
+                    "Vertical angles outside the 3A field of view are rejected");
+        }
         VisionPose position = calibration.project(10, 0, new VisionPose(50, 50, 0));
         require(position != null && position.x > 50 && position.y < 50,
                 "Positive camera tx projects to robot right");
         VisionPose turned = calibration.project(0, 0, new VisionPose(50, 50, Math.PI / 2));
         require(turned != null && Math.abs(turned.x - 50) < 1e-9 && turned.y > 50,
                 "Projection follows the capture heading");
+        calibration.cameraPitchDeg = 20;
+        require(Double.isNaN(calibration.forward_distance(20)), "Horizon ray has no forward floor point");
+        require(Double.isNaN(calibration.forward_distance(18)), "A shallow ray beyond the range limit is rejected");
         calibration.cameraHeightIn = -1;
         require(calibration.project(0, 0, VisionPose.ZERO) == null, "Invalid mounting produces no pollen");
     }
