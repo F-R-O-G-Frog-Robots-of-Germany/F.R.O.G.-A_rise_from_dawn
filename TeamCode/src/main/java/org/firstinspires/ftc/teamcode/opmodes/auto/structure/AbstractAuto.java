@@ -90,7 +90,7 @@ abstract class General extends LinearOpMode {
                 workers.start();
             }
             controlAffinity.bind(control_core());
-            telemetry.setMsTransmissionInterval(100);
+            telemetry.setMsTransmissionInterval(LoopTiming.TELEMETRY_INTERVAL_MS);
             while (opModeInInit()) {
                 follower.localizer.update();
                 if (workers != null) workers.update();
@@ -288,7 +288,6 @@ abstract class General extends LinearOpMode {
             loopTiming.begin();
             clear_bulk_cache();
             update_follower_and_telemetry();
-            idle();
         }
         if (!opModeIsActive()) throw new AutoStopped();
         VisionPose from = parkingDrive.pose();
@@ -547,7 +546,6 @@ abstract class General extends LinearOpMode {
             if (beforeUpdate != null) beforeUpdate.accept(elapsed);
             update_follower_and_telemetry();
             if (finished.getAsBoolean()) return;
-            idle();
         }
         throw new AutoStopped();
     }
@@ -582,12 +580,16 @@ abstract class General extends LinearOpMode {
         }
         shooterSubsystem.update(pose.x(), pose.y(), poseValid);
         loopTiming.end_work();
-        if (CompConfig.loop_time_telemetry_enabled()) {
+        boolean showLoopTime = CompConfig.loop_time_telemetry_enabled();
+        boolean showDiagnostics = CompConfig.telemetry_enabled();
+        if ((!showLoopTime && !showDiagnostics) || !loopTiming.should_publish_telemetry()) return;
+
+        if (showLoopTime) {
             telemetry.addData("Work ms", loopTiming.work_ms());
             telemetry.addData("Cycle ms", loopTiming.cycle_ms());
             telemetry.addData("Hz", loopTiming.hz());
         }
-        if (CompConfig.telemetry_enabled()) {
+        if (showDiagnostics) {
             telemetry.addData("x", pose.x());
             telemetry.addData("y", pose.y());
             telemetry.addData("heading", pose.heading());
@@ -596,7 +598,7 @@ abstract class General extends LinearOpMode {
                 telemetry.addData("Path index", follower.pathIndex());
             }
         }
-        if (CompConfig.loop_time_telemetry_enabled() || CompConfig.telemetry_enabled()) telemetry.update();
+        telemetry.update();
     }
 
     private static final class AutoStopped extends RuntimeException { }

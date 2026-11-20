@@ -75,7 +75,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                 get_telemetry_manager().update();
             }
 
-            get_telemetry_manager().setMsTransmissionInterval(100);
+            get_telemetry_manager().setMsTransmissionInterval(LoopTiming.TELEMETRY_INTERVAL_MS);
             while (opModeInInit()) {
                 follower.localizer.update();
                 update_workers();
@@ -101,7 +101,6 @@ public abstract class AbstractTeleOp extends LinearOpMode {
             on_start();
 
             while (opModeIsActive()) {
-                boolean showLoopTime = CompConfig.loop_time_telemetry_enabled();
                 loopTiming.begin();
                 clear_bulk_cache();
 
@@ -114,19 +113,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                 op_mode_loop();
 
                 loopTiming.end_work();
-                if (showLoopTime) {
-                    get_telemetry_manager().addData("Work ms", loopTiming.work_ms());
-                    get_telemetry_manager().addData("Cycle ms", loopTiming.cycle_ms());
-                    get_telemetry_manager().addData("Hz", loopTiming.hz());
-                }
-                if (CompConfig.telemetry_enabled() && currentPose != null) {
-                    get_telemetry_manager().addData("x [in]", currentPose.x());
-                    get_telemetry_manager().addData("y [in]", currentPose.y());
-                    get_telemetry_manager().addData("heading [°]", toDegrees(currentPose.heading()));
-                }
-                if (showLoopTime || CompConfig.telemetry_enabled()) {
-                    get_telemetry_manager().update();
-                }
+                publish_loop_telemetry();
             }
         } catch (RuntimeException | Error stopped) {
             failure = stopped;
@@ -143,6 +130,29 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                         RobotLog.ww("Competition", controlAffinity.detail()); });
         }
     }
+
+    private void publish_loop_telemetry() {
+        boolean showLoopTime = CompConfig.loop_time_telemetry_enabled();
+        boolean showDiagnostics = CompConfig.telemetry_enabled();
+        if ((!showLoopTime && !showDiagnostics) || !loopTiming.should_publish_telemetry()) return;
+
+        Telemetry display = get_telemetry_manager();
+        if (showDiagnostics) add_loop_telemetry(display);
+        if (showLoopTime) {
+            display.addData("Work ms", loopTiming.work_ms());
+            display.addData("Cycle ms", loopTiming.cycle_ms());
+            display.addData("Hz", loopTiming.hz());
+        }
+        if (showDiagnostics && currentPose != null) {
+            display.addData("x [in]", currentPose.x());
+            display.addData("y [in]", currentPose.y());
+            display.addData("heading [°]", toDegrees(currentPose.heading()));
+        }
+        display.update();
+    }
+
+    /** Add subclass diagnostics when the active-loop display is due. */
+    protected void add_loop_telemetry(Telemetry display) { }
 
     protected void initialize_hardware() {
         if (CompConfig.panels_enabled()) Panels.INSTANCE.enable();
