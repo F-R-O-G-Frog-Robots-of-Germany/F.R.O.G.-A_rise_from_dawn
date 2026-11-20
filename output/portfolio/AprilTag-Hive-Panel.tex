@@ -1,0 +1,141 @@
+% Overleaf compiler: pdfLaTeX. One cropped, A4-width panel (no full-page wrapper).
+\documentclass[10pt,border=0pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[mainfont]{Oswald}
+\usepackage{amsmath,xcolor}
+
+\definecolor{panel}{HTML}{1E1E1E}
+\definecolor{frog}{HTML}{32DD0B}
+\newlength{\panelwidth}
+\setlength{\panelwidth}{200mm}
+\setlength{\fboxsep}{5mm}
+\setlength{\parindent}{0pt}
+\setlength{\jot}{2pt}
+\newsavebox{\portfolioPanel}
+\DeclareMathOperator{\atanTwo}{atan2}
+\DeclareMathOperator{\unit}{unit}
+\newcommand{\vabs}[1]{\lvert #1\rvert}
+\newcommand{\vnorm}[1]{\lVert #1\rVert}
+\newcommand{\steptitle}[1]{{\fontsize{12}{14}\selectfont\bfseries #1\par}\vspace{1.5mm}}
+\newcommand{\key}[2]{\noindent\(#1\)\enspace #2\par}
+\newcommand{\rulegreen}{{\color{frog}\rule{\linewidth}{0.65pt}}\par}
+\newcommand{\legendfont}{\fontsize{9}{11.4}\selectfont}
+
+\begin{document}%
+\sbox{\portfolioPanel}{%
+\colorbox{panel}{%
+\begin{minipage}{\panelwidth}
+\color{white}\raggedright
+\setlength{\fboxsep}{2.5pt}% Compact frame around the position equation.
+\rulegreen\vspace{0.6mm}
+{\fontsize{17}{20}\selectfont\bfseries AprilTags on a Tilting Hive\par}
+\vspace{1.1mm}
+{\fontsize{10}{13}\selectfont
+The Hive's AprilTags move as it tilts, so a fixed tag map gives the wrong robot pose.
+Limelight estimates each tag's 3D pose from its four corners. We use that pose to
+locate the \textbf{fixed hinge}. With robot \textbf{roll and pitch set to \(0^\circ\)}
+on level tiles, the hinge axis gives us heading and the hinge point gives us
+position. We combine agreeing tags from the same image.\par}
+\vspace{1.6mm}
+{\legendfont
+\(T,C,R,W\) denote tag, camera, robot and field frames.
+\(T_{AB}=(R_{AB},t_{AB})\) maps points from \(B\) to \(A\)
+using rotation \(R_{AB}\) and offset \(t_{AB}\). Distances below are in inches.\par}
+\vspace{1.5mm}
+
+\begin{minipage}[t]{0.308\linewidth}
+\raggedright
+\steptitle{1. Read the 3D tag pose}
+\(\begin{aligned}[t]
+t_{CT}&=k(z,-x,-y)^{\mathsf T}\\
+R_{CT}&=S R_z(\gamma) R_y(\beta) R_x(\alpha)\\
+T_{TR}&=(T_{RC}T_{CT})^{-1}
+\end{aligned}\)\par
+\vspace{1.6mm}
+\legendfont
+\key{x,y,z}{Raw optical coordinates in metres.}
+\key{k=1/0.0254}{Metres to inches.}
+\key{\alpha,\beta,\gamma}{Measured tag roll, pitch and yaw. \(R_x,R_y,R_z\) are rotations about the named axes.}
+\key{S}{Axis change \((x,y,z)\mapsto(z,-x,-y)\), from right/down/forward to forward/left/up.}
+\key{T_{RC},T_{TR}}{Camera mount and robot pose in tag coordinates.}
+\end{minipage}\hfill
+%
+\begin{minipage}[t]{0.307\linewidth}
+\raggedright
+\steptitle{2. Find the fixed hinge}
+\(\begin{aligned}[t]
+h_R&=t_{RC}+R_{RC}(t_{CT}+R_{CT}d_T)\\
+u_R&=R_{RC}R_{CT}a_T\\
+\epsilon&=\arcsin\vabs{u_R\cdot g_R}
+\end{aligned}\)\par
+\vspace{1.6mm}
+\legendfont
+\key{d_T,a_T}{Hinge point and signed unit axis in tag coordinates, from the tag ID.}
+\key{h_R,u_R}{Same point and axis in robot coordinates.}
+\key{g_R,\epsilon}{Unit down in robot coordinates and measured hinge-axis slope. Use \(g_R=(0,0,-1)^{\mathsf T}\) for a level robot.}
+\key{g_W,e_x}{Field down \((0,0,-1)^{\mathsf T}\) and signed hinge axis \((1,0,0)^{\mathsf T}\).}
+\end{minipage}\hfill
+%
+\begin{minipage}[t]{0.343\linewidth}
+\raggedright
+\steptitle{3. Recover the robot pose}
+\(\begin{aligned}[t]
+\hat u_R&=\unit\big(u_R-(u_R\cdot g_R)g_R\big)\\
+B(a,g)&=[\,a,\ g\times a,\ g\,]\\
+Q&=B(e_x,g_W) B(\hat u_R,g_R)^{\mathsf T}
+\end{aligned}\)\par
+\vspace{0.7mm}
+\(\boxed{p=H-Qh_R}\quad \psi=\atanTwo(Q_{21},Q_{11})\)\par
+\vspace{1.6mm}
+\legendfont
+\key{\hat u_R}{Horizontal unit hinge axis.}
+\key{B,Q}{Hinge/down basis and robot-to-field rotation.}
+\key{H,p,\psi}{Known field hinge point, robot position and heading. \(p_z\) is robot height.}
+On level tiles, \(Q=R_z(\psi)\) and
+\(\psi=-\atanTwo(u_{R,y},u_{R,x})\).\par
+\end{minipage}\par
+\vspace{1.5mm}\rulegreen\vspace{0.8mm}
+
+\steptitle{4. Combine tags from one image}
+\begin{minipage}[t]{0.475\linewidth}
+\raggedright
+\(\begin{aligned}[t]
+D(\theta)&=\atanTwo(\sin\theta,\cos\theta)\\
+\epsilon_i&\le 10^\circ\\
+\vnorm{p_i-p_j}&\le 6\,\mathrm{in},\qquad \vabs{D(\psi_i-\psi_j)}\le 10^\circ
+\end{aligned}\)\par
+\vspace{1.6mm}
+\legendfont
+Use unique IDs from one exposure. \(D\) wraps heading differences.
+Filter tag \(i\) by axis slope, then compare pairs \(i,j\).
+The largest group around a tag must be unique, form a strict majority
+and agree pairwise. One usable tag can stand alone.\par
+\end{minipage}\hfill
+%
+\begin{minipage}[t]{0.49\linewidth}
+\raggedright
+\(\begin{aligned}[t]
+\bar p&=\tfrac1n\sum\nolimits_i p_i,\qquad
+\bar\psi=\atanTwo\!\big(\sum\nolimits_i\sin\psi_i,\sum\nolimits_i\cos\psi_i\big)\\
+s_p&=\sqrt{\tfrac1n\sum\nolimits_i\vnorm{p_i-\bar p}^{\,2}},\qquad
+s_\psi=\sqrt{\tfrac1n\sum\nolimits_i D(\psi_i-\bar\psi)^2}
+\end{aligned}\)\par
+\vspace{1.6mm}
+\legendfont
+\(n\) accepted tags contribute equally to position \(\bar p\) and
+circular heading \(\bar\psi\). \(s_p,s_\psi\) report RMS disagreement
+in position and heading. Gates shown are defaults. Heading spread is reported in degrees.\par
+\end{minipage}\par
+\vspace{2mm}
+{\legendfont\textbf{\textcolor{frog}{Simulation}}
+\enspace Four-tag fusion reduced RMS position error from \(1.01\) to \(0.51\) in
+under independent translation noise.\par}
+\end{minipage}%
+}%
+}%
+\typeout{Hive panel height: \the\dimexpr\ht\portfolioPanel+\dp\portfolioPanel\relax}%
+\ifdim\dimexpr\ht\portfolioPanel+\dp\portfolioPanel\relax>148.5mm
+  \PackageError{hive-panel}{Panel taller than half an A4 page}{Reduce the content or spacing.}
+\fi%
+\usebox{\portfolioPanel}%
+\end{document}

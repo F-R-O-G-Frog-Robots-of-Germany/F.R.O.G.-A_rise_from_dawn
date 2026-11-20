@@ -1,10 +1,17 @@
 package org.firstinspires.ftc.teamcode.limelight;
 
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Set;
+
 /** Single-exposure localization from a rigid tag, its stationary hinge and gravity. */
 public final class HivePoseEstimator {
     private static final double EPSILON = 1e-9;
     private static final double ROTATION_TOLERANCE = 1e-5;
     private static final double[] DOWN = {0, 0, -1};
+    private static final FrameConfig DEFAULT_FRAME_CONFIG = new FrameConfig(6.0, 10.0, 10.0);
 
     /** R_CT maps native tag coordinates into camera forward/left/up; lengths are inches. */
     public static final class Observation {
@@ -110,6 +117,91 @@ public final class HivePoseEstimator {
 
     }
 
+    /** Pairwise agreement limits for frame fusion; defaults require hardware tuning. */
+    public static final class FrameConfig {
+        public final double maxPositionDifferenceIn;
+        public final double maxHeadingDifferenceDeg;
+        public final double maxAxisErrorDeg;
+
+        public FrameConfig(double maxPositionDifferenceIn, double maxHeadingDifferenceDeg,
+                           double maxAxisErrorDeg) {
+            if (!Double.isFinite(maxPositionDifferenceIn) || maxPositionDifferenceIn <= 0
+                    || !Double.isFinite(maxHeadingDifferenceDeg) || maxHeadingDifferenceDeg <= 0
+                    || maxHeadingDifferenceDeg >= 90
+                    || !Double.isFinite(maxAxisErrorDeg) || maxAxisErrorDeg < 0
+                    || maxAxisErrorDeg >= 90) {
+                throw new IllegalArgumentException("Positive distance, heading in (0,90), axis error in [0,90) required");
+            }
+            this.maxPositionDifferenceIn = maxPositionDifferenceIn;
+            this.maxHeadingDifferenceDeg = maxHeadingDifferenceDeg;
+            this.maxAxisErrorDeg = maxAxisErrorDeg;
+        }
+    }
+
+    /**
+     * Equal-weight pose consensus in the same centered field frame as Result.
+     * Spreads describe disagreement among accepted tags, not calibrated measurement uncertainty.
+     * Shared camera, mounting and gravity errors can affect every tag together.
+     */
+    public static final class FrameResult {
+        public final long captureTimeMs;
+        public final boolean usesAssumedValues;
+        public final double x;
+        public final double y;
+        public final double z;
+        public final double heading;
+        public final int tagCount;
+        /** Tags with a valid pose and acceptable axis error before consensus selection. */
+        public final int usableTagCount;
+        /** Input list size, including null, unknown or unusable observations. */
+        public final int observationCount;
+        /** Root-mean-square 3D distance from accepted poses to the mean, in inches. */
+        public final double positionSpreadIn;
+        /** Root-mean-square wrapped heading difference from the circular mean, in degrees. */
+        public final double headingSpreadDeg;
+        public final double maxAxisErrorDeg;
+        private final int[] tagIds;
+
+        private FrameResult(List<Result> accepted, int usableTagCount, int observationCount) {
+            this.captureTimeMs = accepted.get(0).captureTimeMs;
+            this.tagCount = accepted.size();
+            this.usableTagCount = usableTagCount;
+            this.observationCount = observationCount;
+            this.tagIds = new int[tagCount];
+            double meanX = 0, meanY = 0, meanZ = 0, meanSin = 0, meanCos = 0;
+            double maxAxisError = 0;
+            boolean assumed = false;
+            for (int i = 0; i < tagCount; i++) {
+                Result pose = accepted.get(i);
+                tagIds[i] = pose.tagId;
+                meanX += pose.x / tagCount;
+                meanY += pose.y / tagCount;
+                meanZ += pose.z / tagCount;
+                meanSin += Math.sin(pose.heading) / tagCount;
+                meanCos += Math.cos(pose.heading) / tagCount;
+                maxAxisError = Math.max(maxAxisError, pose.axisErrorDeg);
+                assumed |= pose.usesAssumedValues;
+            }
+            this.x = meanX;
+            this.y = meanY;
+            this.z = meanZ;
+            this.heading = Math.atan2(meanSin, meanCos);
+            this.maxAxisErrorDeg = maxAxisError;
+            this.usesAssumedValues = assumed;
+            double positionNorm = 0, headingNorm = 0;
+            for (Result pose : accepted) {
+                double distance = Math.hypot(Math.hypot(pose.x - x, pose.y - y), pose.z - z);
+                positionNorm = Math.hypot(positionNorm, distance);
+                headingNorm = Math.hypot(headingNorm, heading_difference(pose.heading, heading));
+            }
+            this.positionSpreadIn = positionNorm / Math.sqrt(tagCount);
+            this.headingSpreadDeg = Math.toDegrees(headingNorm / Math.sqrt(tagCount));
+        }
+
+        /** Accepted unique IDs, sorted ascending. */
+        public int[] tag_ids() { return tagIds.clone(); }
+    }
+
     private final TagModel[] models;
     private final CameraMount mount;
     public HivePoseEstimator(TagModel[] models, CameraMount mount) {
@@ -170,6 +262,93 @@ public final class HivePoseEstimator {
             return null;
         }
         return new Result(observation, assumed, position, heading, axisErrorDeg);
+    }
+
+    /**
+     * Fuses per-tag poses from one physical exposure. Defaults are 6 inches in 3D,
+     * 10 degrees of heading disagreement and 10 degrees of hinge/gravity disagreement.
+     * The caller supplies exposure-aligned gravity and handles freshness and repeated frames.
+     */
+    public FrameResult estimate_frame(List<Observation> observations, double[] gravityRobot,
+                                      boolean gravityAssumed) {
+        return estimate_frame(observations, gravityRobot, gravityAssumed, DEFAULT_FRAME_CONFIG);
+    }
+
+    /**
+     * Returns null for no usable tags, mixed timestamps, duplicate IDs or ambiguous consensus.
+     * Unknown/invalid poses and poses above the axis-error limit are excluded before voting.
+     * A single usable tag is returned with tagCount == 1. Otherwise a unique strict majority
+     * must agree pairwise in 3D position and wrapped heading. Tied or chained groups are rejected.
+     * All accepted poses receive equal weight; no per-tag covariance is supplied by the SDK.
+     *
+     * <p>Matching timestamps cannot establish physical frame identity by themselves. Pass the
+     * observations copied by HiveLimelightObservation.from_result from a single LLResult.
+     */
+    public FrameResult estimate_frame(List<Observation> observations, double[] gravityRobot,
+                                      boolean gravityAssumed, FrameConfig config) {
+        if (config == null) throw new IllegalArgumentException("Frame configuration required");
+        if (observations == null || observations.isEmpty()) return null;
+        Set<Integer> seenIds = new HashSet<>();
+        long captureTimeMs = -1;
+        List<Result> candidates = new ArrayList<>();
+        for (Observation observation : observations) {
+            if (observation == null) continue;
+            if (observation.captureTimeMs < 0 || !seenIds.add(observation.tagId)) return null;
+            if (captureTimeMs >= 0 && observation.captureTimeMs != captureTimeMs) return null;
+            captureTimeMs = observation.captureTimeMs;
+            Result pose = estimate(observation, gravityRobot, gravityAssumed);
+            if (pose != null && pose.axisErrorDeg <= config.maxAxisErrorDeg) candidates.add(pose);
+        }
+        if (candidates.isEmpty()) return null;
+        // Stable ordering makes equal-weight floating-point sums independent of input order.
+        candidates.sort((first, second) -> Integer.compare(first.tagId, second.tagId));
+        int count = candidates.size();
+        boolean[][] agrees = new boolean[count][count];
+        for (int i = 0; i < count; i++) {
+            Result first = candidates.get(i);
+            for (int j = 0; j <= i; j++) {
+                Result second = candidates.get(j);
+                double distance = Math.hypot(Math.hypot(first.x - second.x, first.y - second.y),
+                        first.z - second.z);
+                boolean compatible = distance <= config.maxPositionDifferenceIn
+                        && Math.abs(heading_difference(first.heading, second.heading))
+                        <= Math.toRadians(config.maxHeadingDifferenceDeg);
+                agrees[i][j] = agrees[j][i] = compatible;
+            }
+        }
+        boolean[] best = null;
+        int bestCount = 0;
+        boolean ambiguous = false;
+        for (boolean[] group : agrees) {
+            int support = 0;
+            for (boolean member : group) if (member) support++;
+            if (support > bestCount) {
+                best = group;
+                bestCount = support;
+                ambiguous = false;
+            } else if (support == bestCount && !Arrays.equals(best, group)) {
+                ambiguous = true;
+            }
+        }
+        if (ambiguous || bestCount <= count / 2) return null;
+        List<Result> accepted = new ArrayList<>(bestCount);
+        for (int i = 0; i < count; i++) {
+            if (!best[i]) continue;
+            for (int j = 0; j < i; j++) {
+                if (best[j] && !agrees[i][j]) return null;
+            }
+            accepted.add(candidates.get(i));
+        }
+        FrameResult result = new FrameResult(accepted, count, observations.size());
+        if (!Double.isFinite(result.x) || !Double.isFinite(result.y) || !Double.isFinite(result.z)
+                || !Double.isFinite(result.positionSpreadIn) || !Double.isFinite(result.headingSpreadDeg)) {
+            return null;
+        }
+        return result;
+    }
+
+    private static double heading_difference(double first, double second) {
+        return Math.atan2(Math.sin(first - second), Math.cos(first - second));
     }
 
     private static double[] copy_size(double[] values, int size) {

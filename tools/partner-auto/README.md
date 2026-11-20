@@ -1,6 +1,6 @@
 # Partner Auto Import
 
-An offline Python application for importing a partner's Pedro `.pp` project or Java autonomous source, reviewing the extracted route and stationary actions, and exporting a local JSON planning profile. It does not modify or enable Butine, Limelight or any competition OpMode.
+Import a partner's Pedro `.pp` project or Java autonomous source, inspect the route, and export a JSON profile for desktop Butine planning.
 
 ## Start the paste/import interface
 
@@ -16,9 +16,15 @@ The source controls accept individual `.pp`/`.java` files, a Java source folder,
 
 Several complete Java files can also be pasted together. The reader splits compilation units at actual package declarations, ignoring package-like text in comments/strings, and preserves original diagnostic line references. If pasted source exactly matches this FROG checkout, missing local helpers such as `PoseMirroring` can be resolved from the project and are listed in the findings. Unfamiliar partner code is not filled with guessed FROG helpers. Choose the concrete autonomous when several are found, review the route/findings, then export the JSON profile.
 
-Wi-Fi may stay connected. No internet service or online check is used: the browser sends imports only to Python at `127.0.0.1` on this computer. A local connection error means that Python could not be reached, not that Wi-Fi needs disconnecting. Reopen `launch.bat` if needed; the source remains in the editor and draft storage. Open the app through its launcher rather than double-clicking `ui.html`, which cannot run Python by itself.
+The importer runs locally at `127.0.0.1`. The theme menu supports System, Dark and Light and remembers your choice.
 
 Requirements: Python 3.10 or newer. `.pp` import uses only the Python standard library. Java source import additionally requires a JDK 17 or newer with `java` and `javac` available through `JAVA_HOME` or `PATH`. Android Studio users can use an installed compatible JDK. Imported Java is parsed and interpreted by supported source-analysis adapters; its robot program is never executed. The importer does not run the partner's Gradle scripts or require their hardware.
+
+## Test the route with Butine
+
+After a complete import, open **Butine desktop test**, enter a RED-side start and depot, and select **Run Butine test**. This uses a repeatable 30-second scenario and requires a JDK and the project's cached Pedro dependency. Open the downloaded `.pp` in your Pedro visualizer. Orange shapes mark the reserved partner corridor.
+
+The desktop planner reserves the entire imported corridor for the test, including the partner's final hold. In the field preview above the test, the time slider still shows the estimated occupancy at a selected time. The exported JSON can also be passed to the [desktop exporter](../butine-visualizer/README.md#test-with-a-partner-profile). Competition code does not load importer profiles.
 
 ## Import from the command line
 

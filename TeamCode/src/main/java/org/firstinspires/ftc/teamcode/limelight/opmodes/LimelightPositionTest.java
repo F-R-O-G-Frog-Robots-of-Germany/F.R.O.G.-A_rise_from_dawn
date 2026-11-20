@@ -8,7 +8,6 @@ import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 import org.firstinspires.ftc.teamcode.limelight.Limelight;
-import org.firstinspires.ftc.teamcode.limelight.LimelightCalibration;
 import org.firstinspires.ftc.teamcode.limelight.LimelightGeometry;
 import org.firstinspires.ftc.teamcode.limelight.PedroButineDrive;
 import org.firstinspires.ftc.teamcode.limelight.Pollen;
@@ -40,10 +39,6 @@ public final class LimelightPositionTest extends LinearOpMode {
             gamepad1.resetEdgeDetection();
             gamepad1.copy(gamepad1);
             VisionPose reference = null;
-            LimelightCalibration pinhole = new LimelightCalibration();
-            LimelightCalibration quadratic = new LimelightCalibration();
-            pinhole.usePinholeRange = true;
-            quadratic.usePinholeRange = false;
             boolean details = true;
             long statusNanos = 0;
             while (opModeIsActive()) {
@@ -63,7 +58,6 @@ public final class LimelightPositionTest extends LinearOpMode {
                 if (gamepad1.yWasPressed()) map.clear();
                 if (gamepad1.backWasPressed()) camera.set_pipeline(camera.pipeline() == Limelight.DETECTOR_PIPELINE
                         ? Limelight.APRILTAG_PIPELINE : Limelight.DETECTOR_PIPELINE);
-                if (gamepad1.startWasPressed()) camera.calibration.usePinholeRange = !camera.calibration.usePinholeRange;
                 if (gamepad1.leftTriggerWasPressed()) camera.calibration.cameraHeightIn =
                         Math.max(1, camera.calibration.cameraHeightIn - 0.5);
                 if (gamepad1.rightTriggerWasPressed()) camera.calibration.cameraHeightIn =
@@ -93,14 +87,12 @@ public final class LimelightPositionTest extends LinearOpMode {
                             fix.x - here.x, fix.y - here.y, Math.toDegrees(VisionPose.wrap_pi(fix.heading - here.heading)));
                 }
                 telemetry.addData("Reference", reference == null ? "A to set" : reference.distance_to(here) + " in moved");
-                telemetry.addData("Range model", camera.calibration.usePinholeRange ? "pinhole" : "quadratic placeholder");
                 telemetry.addData("Height / pitch", "%.1f in / %.1f deg", camera.calibration.cameraHeightIn,
                         camera.calibration.cameraPitchDeg);
-                telemetry.addData("Range at LL ty", camera.forward_distance(camera.get_ty()));
-                pinhole.cameraHeightIn = camera.calibration.cameraHeightIn;
-                pinhole.cameraPitchDeg = camera.calibration.cameraPitchDeg;
-                telemetry.addData("Compare ranges", "pinhole %.1f / quadratic %.1f in",
-                        pinhole.forward_distance(camera.get_ty()), quadratic.forward_distance(camera.get_ty()));
+                Limelight.Result result = camera.get_result();
+                if (camera.has_target() && result.pipelineIndex == Limelight.DETECTOR_PIPELINE) {
+                    telemetry.addData("Pinhole range at LL ty", camera.forward_distance(result.tyNoCrosshair));
+                }
                 for (double ty : new double[]{-20, -15, -10, -5, 0}) {
                     telemetry.addData("f(" + ty + ") in", camera.forward_distance(ty));
                 }
@@ -127,7 +119,7 @@ public final class LimelightPositionTest extends LinearOpMode {
                         i++;
                     }
                 }
-                telemetry.addLine("A ref | B clear ref | X details | Y clear map | BACK pipeline | START model");
+                telemetry.addLine("A ref | B clear ref | X details | Y clear map | BACK pipeline");
                 telemetry.addLine("Triggers height -/+ | bumpers pitch -/+ | dpad UD inject");
                 telemetry.update();
                 idle();

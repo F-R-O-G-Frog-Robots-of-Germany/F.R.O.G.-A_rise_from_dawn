@@ -6,6 +6,7 @@ import io
 import json
 import math
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
@@ -59,6 +60,47 @@ class ExportChecks(unittest.TestCase):
     def test_requested_gradient(self):
         self.assertEqual([exporter.route_color(i, 5) for i in range(5)],
                          ["#ffffff", "#80ff80", "#00ff00", "#008000", "#000000"])
+
+    def test_imported_partner_corridor_changes_the_java_plan(self):
+        importer = exporter.PROJECT_ROOT / "tools/partner-auto"
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            source = json.loads((importer / "examples/partner.pp").read_text(encoding="utf-8"))
+            source["startPoint"].update(x=90, y=20)
+            source["lines"][0]["controlPoints"][0].update(x=90, y=50)
+            source["lines"][0]["endPoint"].update(x=90, y=90)
+            source["lines"][1]["endPoint"].update(x=90, y=20)
+            path, profile = folder / "partner.pp", folder / "partner.json"
+            path.write_text(json.dumps(source), encoding="utf-8")
+            exporter.run_process([sys.executable, str(importer / "import_partner_auto.py"),
+                                  str(path), "--output", str(profile)])
+            project, world, plan = self.export(temporary, "with-partner.pp", "--depot", "40", "18", "90",
+                                               "--partner-profile", str(profile))
+            _, baseline_world, baseline = self.export(temporary, "baseline.pp", "--depot", "40", "18", "90")
+            reserved = [box for box in plan["obstacles"] if box.get("partner")]
+            self.assertTrue(reserved)
+            self.assertTrue(any(shape["name"].startswith("Partner corridor") for shape in project["shapes"]))
+            self.assertEqual(world, baseline_world, "Reserve space without moving any generated game pieces")
+            self.assertGreater(plan["diagnostics"]["totalCollected"], 0)
+            self.assertLess(plan["diagnostics"]["totalCollected"], baseline["diagnostics"]["totalCollected"])
+            self.assertTrue(plan["diagnostics"]["allSegmentsClear"])
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as error:
+                code = exporter.main(["--partner-profile", str(profile), "--output", str(folder / "blocked.pp")])
+            self.assertEqual(code, 1)
+            self.assertIn("partner corridor blocks", error.getvalue())
+
+    def test_partner_corridor_coarsens_without_dropping_reserved_space(self):
+        reservations = [{"bounds": {"min_x": x, "max_x": x + 1, "min_y": y, "max_y": y + 1}}
+                        for x, y in [(4, 15), (26, 40), (92, 90), (133, 139)]]
+        profile = {"schema_version": "1.0", "status": "complete", "settings": {"field_size_in": 144},
+                   "reservations": reservations}
+        boxes = exporter.partner_corridor(profile, 144, 2)
+        self.assertLessEqual(len(boxes), 2)
+        for reservation in reservations:
+            bounds = reservation["bounds"]
+            self.assertTrue(any(left <= bounds["min_x"] < bounds["max_x"] <= right
+                                and bottom <= bounds["min_y"] < bounds["max_y"] <= top
+                                for left, right, bottom, top in boxes))
 
     def test_real_java_routes_and_display_only_markers(self):
         with tempfile.TemporaryDirectory(prefix="Pedro export with spaces ") as temporary:

@@ -5,7 +5,7 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 
-/** A new detector frame replaces its visible wedge and preserves everything outside it. */
+/** A new detector frame replaces tracks on the visible floor. */
 public final class PollenMap {
     public static final int HARD_MAX_TRACKS = 64;
     public static final int HARD_MAX_DETECTIONS = 32;
@@ -83,7 +83,7 @@ public final class PollenMap {
     public PollenMap(Limelight camera, Config config) {
         if (config == null) throw new IllegalArgumentException("Map config is required");
         this.camera = camera;
-        this.activeCalibration = camera == null ? null : camera.calibration;
+        this.activeCalibration = camera == null ? new LimelightCalibration() : camera.calibration;
         this.config = config;
     }
 
@@ -247,7 +247,7 @@ public final class PollenMap {
 
     public synchronized boolean in_frustum(VisionPose robot, VisionPose target) {
         if (robot == null || target == null || !robot.is_finite() || !target.is_finite()
-                || !valid_config()) return false;
+                || !valid_config() || !activeCalibration.has_valid_mounting()) return false;
         double cos = Math.cos(robot.heading);
         double sin = Math.sin(robot.heading);
         double cameraX = robot.x + LimelightGeometry.CAMERA_FORWARD_OFFSET_IN * cos
@@ -259,24 +259,22 @@ public final class PollenMap {
         double range = Math.hypot(dx, dy);
         if (range < config.nearIn + config.frustumMarginIn
                 || range > config.farIn - config.frustumMarginIn) return false;
-        double halfFov = Math.toRadians(config.hfovDeg / 2 - config.frustumMarginDeg);
+        double hfov = Math.min(config.hfovDeg, LimelightGeometry.HORIZONTAL_FOV_DEG);
+        double halfFov = Math.toRadians(hfov / 2 - config.frustumMarginDeg);
+        if (halfFov <= 0) return false;
         double bearing = VisionPose.wrap_pi(Math.atan2(dy, dx) - robot.heading
                 - Math.toRadians(LimelightGeometry.CAMERA_YAW_DEG));
-        if (activeCalibration != null && activeCalibration.usePinholeRange) {
-            double height = activeCalibration.cameraHeightIn;
-            double pitch = Math.toRadians(activeCalibration.cameraPitchDeg);
-            if (!Double.isFinite(height) || height <= 0 || !Double.isFinite(pitch)) return false;
-            double forward = range * Math.cos(bearing);
-            double right = -range * Math.sin(bearing);
-            double opticalForward = forward * Math.cos(pitch) + height * Math.sin(pitch);
-            double opticalUp = forward * Math.sin(pitch) - height * Math.cos(pitch);
-            if (!(opticalForward > 0)) return false;
-            double tx = Math.atan2(right, opticalForward);
-            double ty = Math.atan2(opticalUp, opticalForward);
-            return Math.abs(tx) <= halfFov
-                    && Math.abs(ty) <= Math.toRadians(LimelightGeometry.VERTICAL_FOV_DEG / 2);
-        }
-        return Math.abs(bearing) <= halfFov;
+        double height = activeCalibration.cameraHeightIn;
+        double pitch = Math.toRadians(activeCalibration.cameraPitchDeg);
+        double forward = range * Math.cos(bearing);
+        double right = -range * Math.sin(bearing);
+        double opticalForward = forward * Math.cos(pitch) + height * Math.sin(pitch);
+        double opticalUp = forward * Math.sin(pitch) - height * Math.cos(pitch);
+        if (!(opticalForward > 0)) return false;
+        double tx = Math.atan2(right, opticalForward);
+        double ty = Math.atan2(opticalUp, opticalForward);
+        return Math.abs(tx) <= halfFov
+                && Math.abs(ty) <= Math.toRadians(LimelightGeometry.VERTICAL_FOV_DEG / 2);
     }
 
     private boolean valid_config() {

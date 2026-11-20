@@ -1,9 +1,14 @@
 package com.qualcomm.hardware.limelightvision;
 public final class LLResultTypes {
     public static class DetectorResult {
-        public String name="pollen"; public double confidence=0.83984375, tx,ty,area=1;
+        public String name="pollen"; public double confidence=0.83984375, tx,area=1;
+        // A floor target 28 inches ahead of the level, 10-inch-high test camera.
+        public double txNoCrosshair, tyNoCrosshair = -Math.toDegrees(Math.atan2(10, 28));
+        public double ty = tyNoCrosshair;
         public String getClassName(){return name;} public double getConfidence(){return confidence;}
         public double getTargetXDegrees(){return tx;} public double getTargetYDegrees(){return ty;}
+        public double getTargetXDegreesNoCrosshair(){return txNoCrosshair;}
+        public double getTargetYDegreesNoCrosshair(){return tyNoCrosshair;}
         public double getTargetArea(){return area;}
     }
     public static class FiducialResult {

@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import secrets
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from urllib.parse import parse_qs, urlsplit
@@ -193,6 +194,41 @@ def dump_json(value: object) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
 
 
+def run_butine_test(profile: dict, depot: str) -> dict:
+    if not isinstance(profile, dict) or profile.get("status") != "complete":
+        raise ValueError("Import a complete partner route first.")
+    try:
+        pose = [float(part) for part in depot.replace(",", " ").split()]
+    except (AttributeError, ValueError):
+        pose = []
+    if len(pose) != 3 or not all(math.isfinite(value) for value in pose):
+        raise ValueError("Enter the start and depot as X, Y and heading in degrees.")
+
+    script = PROJECT_ROOT / "tools/butine-visualizer/generate_pollen_routes.py"
+    with tempfile.TemporaryDirectory(prefix="butine-partner-") as folder:
+        source = Path(folder) / "partner.json"
+        project = Path(folder) / "butine-partner-test.pp"
+        source.write_text(dump_json(profile), encoding="utf-8")
+        try:
+            result = subprocess.run(
+                [sys.executable, str(script), "--partner-profile", str(source), "--output", str(project),
+                 "--seed", "20261019", "--seconds", "30", "--depot", *map(str, pose)],
+                cwd=PROJECT_ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise ValueError("The desktop Butine test timed out.") from error
+        if result.returncode:
+            raise ValueError(result.stderr.strip().removeprefix("error: ") or "The desktop Butine test failed.")
+        plan = json.loads(project.with_suffix(".plan.json").read_text(encoding="utf-8"))
+        return {
+            "project": json.loads(project.read_text(encoding="utf-8")),
+            "collected": plan["diagnostics"]["totalCollected"],
+            "trips": len(plan["runs"]),
+            "reason": plan["diagnostics"]["stopReason"],
+        }
+
+
 class ImportServer(ThreadingHTTPServer):
     daemon_threads = True
 
@@ -262,22 +298,25 @@ class ImportHandler(BaseHTTPRequestHandler):
             self.reply(200, dump_json({"stopped": True}))
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return
-        if route != "/api/import":
+        if route not in {"/api/import", "/api/butine"}:
             self.reply(404, dump_json({"error": "Not found."}))
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if not 0 < length <= MAX_BYTES + 1024 * 1024:
-                raise ValueError("Import payload is empty or too large.")
+                raise ValueError("Request is empty or too large.")
             payload = json.loads(self.rfile.read(length))
             if not isinstance(payload, dict):
-                raise ValueError("Import request must be an object.")
+                raise ValueError("Request must be an object.")
             if not self.server.import_lock.acquire(blocking=False):
-                self.reply(409, dump_json({"error": "An import is already running."}))
+                self.reply(409, dump_json({"error": "Another import or test is running."}))
                 return
             try:
-                result = import_sources(payload.get("sources", {}), payload.get("format", "auto"),
-                                        payload.get("entry") or None, payload.get("settings"))
+                if route == "/api/butine":
+                    result = run_butine_test(payload.get("profile"), payload.get("depot"))
+                else:
+                    result = import_sources(payload.get("sources", {}), payload.get("format", "auto"),
+                                            payload.get("entry") or None, payload.get("settings"))
             finally:
                 self.server.import_lock.release()
             self.reply(200, dump_json(result))

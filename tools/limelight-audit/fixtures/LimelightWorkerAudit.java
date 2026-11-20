@@ -79,7 +79,7 @@ public final class LimelightWorkerAudit {
             Thread.sleep(120);
             require(!held.has_target() && held.get_tx() == 0 && held.get_pose() == null,
                     "held snapshot expires without further worker publications");
-            int id = context.map.inject(new VisionPose(46, 20, 0));
+            int id = context.map.inject(new VisionPose(48, 20, 0));
             require(id >= 0 && context.map.remove(id), "map lock is never held across blocked SDK I/O");
             long started = System.nanoTime();
             require(!context.worker.stop(), "bounded stop reports blocked owner");
@@ -101,8 +101,8 @@ public final class LimelightWorkerAudit {
             context.worker.submit_pose(POSE);
             await(() -> context.map.size() == 1, "detector maps to field target");
             Pollen pollen = context.map.snapshot().get(0);
-            require(Math.abs(pollen.position.x - 46) < 1e-9 && Math.abs(pollen.position.y - 20) < 1e-9,
-                    "worker uses actual pose20,20 plus calibrated26inch range");
+            require(Math.abs(pollen.position.x - 48) < 1e-9 && Math.abs(pollen.position.y - 20) < 1e-9,
+                    "worker uses actual pose20,20 plus calibrated28inch range");
             long sequence = context.worker.snapshot().frameSequence;
             Thread.sleep(140);
             device.frame = frame(2, false);
@@ -134,8 +134,8 @@ public final class LimelightWorkerAudit {
             device.frame = delayed;
             device.statusGate.countDown();
             await(() -> context.map.size() == 1, "frame received after slow health status maps successfully");
-            require(Math.abs(context.map.snapshot().get(0).position.x - 76) < 1e-9,
-                    "delayed image after status I/O uses newest pose50 plus range26");
+            require(Math.abs(context.map.snapshot().get(0).position.x - 78) < 1e-9,
+                    "delayed image after status I/O uses newest pose50 plus range28");
             require(context.camera.pollen_frame_pose().x == 50,
                     "frame pose metadata uses the newest robot input after slow status I/O");
         } finally { device.release(); context.worker.stop(); }
@@ -148,7 +148,7 @@ public final class LimelightWorkerAudit {
             context.worker.start();
             context.worker.submit_pose(POSE);
             await(() -> context.worker.snapshot().frameSequence > 0, "initial frame has pose evidence");
-            int id = context.map.inject(new VisionPose(46, 20, 0));
+            int id = context.map.inject(new VisionPose(48, 20, 0));
             context.worker.submit_pose(null);
             device.frame = frame(2, false);
             Thread.sleep(30);
@@ -180,7 +180,7 @@ public final class LimelightWorkerAudit {
         try {
             context.worker.start(); context.worker.submit_pose(POSE);
             await(() -> context.worker.snapshot().frameSequence > 0, "epoch race starts with valid frame");
-            context.map.inject(new VisionPose(50, 20, 0));
+            context.map.inject(new VisionPose(62, 20, 0));
             device.readGate = new CountDownLatch(1);
             require(device.readEntered.await(2, TimeUnit.SECONDS), "old-pose read blocks before invalidation");
             context.worker.submit_pose(null);
@@ -189,11 +189,14 @@ public final class LimelightWorkerAudit {
             await(() -> context.worker.snapshot().frameSequence >= 2, "old-pose frame completed while invalidated");
             context.worker.submit_pose(new VisionPose(30, 20, 0));
             Thread.sleep(40);
-            require(context.map.size() == 1 && Math.abs(context.map.snapshot().get(0).position.x - 50) < 1e-9,
-                    "new valid epoch cannot replay previously unconsumed old-pose frame46");
+            require(context.map.size() == 1 && Math.abs(context.map.snapshot().get(0).position.x - 62) < 1e-9,
+                    "new valid epoch cannot replay previously unconsumed old-pose frame48");
             device.frame = frame(3, true);
-            await(() -> Math.abs(context.map.snapshot().get(0).position.x - 56) < 1e-9,
-                    "next genuinely new image uses new30+26 origin56");
+            await(() -> {
+                List<Pollen> snapshot = context.map.snapshot();
+                return snapshot.size() == 1 && Math.abs(snapshot.get(0).position.x - 58) < 1e-9;
+            },
+                    "next genuinely new image uses new30+28 origin58");
         } finally { device.release(); context.worker.stop(); }
     }
 
@@ -289,8 +292,8 @@ public final class LimelightWorkerAudit {
             require(runner.stats().applied == 1 && Math.abs(drive.position.x - 25) < 1e-9,
                     "tag fix applied only by caller drive");
             await(() -> context.map.size() == 1, "detector resumes after correction");
-            require(Math.abs(context.map.snapshot().get(0).position.x - 51) < 1e-9,
-                    "new camera epoch uses corrected25 plus range26, never previous20 origin");
+            require(Math.abs(context.map.snapshot().get(0).position.x - 53) < 1e-9,
+                    "new camera epoch uses corrected25 plus range28, never previous20 origin");
             require(!drive.wrongThread, "corrected pose and follower calls stay on caller thread");
         } finally { device.release(); runner.stop(); }
     }

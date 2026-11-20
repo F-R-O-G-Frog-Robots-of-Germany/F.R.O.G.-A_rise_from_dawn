@@ -14,6 +14,7 @@ function makePage(storage = new Map(), response = async () => ({ok:true,status:2
     replaceChildren(...values) { this.children=values; }
     append(...values) { this.children.push(...values); }
     setAttribute(k,v) { this.attrs[k]=String(v); }
+    removeAttribute(k) { delete this.attrs[k]; }
     querySelectorAll() { return fields; }
     add(value) { this.children.push(value); }
     click() { return this.events.click?.(); }
@@ -23,7 +24,7 @@ function makePage(storage = new Map(), response = async () => ({ok:true,status:2
   for(const [key,value] of Object.entries({field_size_in:144,speed_in_s:30,robot_length_in:18,robot_width_in:18,acceleration_in_s2:40,turn_rate_rad_s:Math.PI,clearance_in:2,timing_uncertainty_s:.5,start_delay_s:0,auto_duration_s:30})) { const item=el(key); item.value=String(value); fields.push(item); }
   el('format').value='auto'; el('entry').value=''; el('clock').value='0';
   const requests=[];
-  const context={document:{getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},Option:class{constructor(text,value){this.text=text;this.value=value;}},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},location:{protocol,hostname:'127.0.0.1'},navigator:{onLine:true},fetch:async(url,options)=>{requests.push({url,options,body:options?.body?JSON.parse(options.body):null});return response(url,options);},URL:{createObjectURL:()=>'',revokeObjectURL:()=>{}},Blob:class{},setTimeout,console};
+  const context={document:{documentElement:new Element('html'),getElementById:el,createElement:tag=>new Element(tag),createElementNS:(_,tag)=>new Element(tag)},Option:class{constructor(text,value){this.text=text;this.value=value;}},localStorage:{getItem:key=>storage.get(key)||null,setItem:(key,value)=>storage.set(key,value)},location:{protocol,hostname:'127.0.0.1'},navigator:{onLine:true},fetch:async(url,options)=>{requests.push({url,options,body:options?.body?JSON.parse(options.body):null});return response(url,options);},URL:{createObjectURL:()=>'',revokeObjectURL:()=>{}},Blob:class{},setTimeout,console};
   vm.runInNewContext(script,context);
   return {el,requests,storage,context};
 }
@@ -35,7 +36,6 @@ function makePage(storage = new Map(), response = async () => ({ok:true,status:2
   await page.el('import').click();
   assert.equal(page.el('paste').value,PP,'Network failure must preserve exact pasted text');
   assert(page.el('error').textContent.includes('Python on this computer'));
-  assert(page.el('error').textContent.includes('Wi-Fi can stay connected'));
   assert.equal(Object.keys(page.requests[0].body.sources).length,1);
   fail=false;
   await page.el('import').click();
@@ -88,5 +88,23 @@ function makePage(storage = new Map(), response = async () => ({ok:true,status:2
   unknownPage.el('paste').value=PP;
   await unknownPage.el('import').click();
   assert(!unknownPage.el('summary').textContent.includes('compressed'),'Unbounded timing must not claim a fitted finite schedule');
+  assert.equal(unknownPage.el('butine-test').disabled,true);
+  const butinePage=makePage(new Map(),async url=>({ok:true,status:200,json:async()=>
+    url==='/api/butine' ? {project:{version:'1.5.0'},collected:8,trips:2} : result}));
+  butinePage.el('paste').value=PP;
+  await butinePage.el('import').click();
+  butinePage.el('butine-depot').value='40 18 90';
+  await butinePage.el('butine-test').click();
+  assert.equal(butinePage.requests[1].url,'/api/butine');
+  assert.deepEqual(butinePage.requests[1].body,{profile:result,depot:'40 18 90'});
+  assert.equal(butinePage.el('butine-download').disabled,false);
+  butinePage.el('butine-depot').events.input();
+  assert.equal(butinePage.el('butine-download').disabled,true,'Changing the depot clears the old project');
+  butinePage.el('theme').value='dark';
+  butinePage.el('theme').events.change();
+  assert.equal(makePage(butinePage.storage).context.document.documentElement.attrs['data-theme'],'dark');
+  butinePage.el('theme').value='system';
+  butinePage.el('theme').events.change();
+  assert.equal(butinePage.context.document.documentElement.attrs['data-theme'],undefined);
   console.log('UI regression checks passed: draft retention, failed/edited retries, local-only fetch, reload, multi-file editing and fitted timing display.');
 })().catch(error=>{console.error(error);process.exitCode=1;});

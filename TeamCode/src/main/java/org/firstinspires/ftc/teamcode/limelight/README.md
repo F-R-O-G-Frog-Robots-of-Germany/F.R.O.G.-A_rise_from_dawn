@@ -63,9 +63,13 @@ map.update(camera);
 camera.stop();
 ```
 
-Update camera results frequently, around the source's 10–20 ms loop period. Read the heavier status block with `update_full(here)` around every 250 ms. Detections and map clearing use the same current robot pose supplied when the detector frame is processed; custom capture-time pose history and latency compensation have been removed. The worker samples the newest submitted pose after slow camera I/O and retains its original submission timestamp for freshness checks. Empty fresh detector frames clear the corresponding visible wedge, repeated/missing/stale frames supply no new evidence, and switching to AprilTags freezes detector publication. SDK latency metadata remains available for diagnostics and the existing frame-timing validity guard.
+Update camera results frequently, around the source's 10–20 ms loop period. Read the heavier status block with `update_full(here)` around every 250 ms. Detections and map clearing use the same current robot pose supplied when the detector frame is processed; custom capture-time pose history and latency compensation have been removed. The worker samples the newest submitted pose after slow camera I/O and retains its original submission timestamp for freshness checks. Empty fresh detector frames clear tracks on the visible floor, repeated/missing/stale frames supply no new evidence, and switching to AprilTags freezes detector publication. SDK latency metadata remains available for diagnostics and the existing frame-timing validity guard.
 
-Camera dimensions and mounting are in `LimelightGeometry`. The inherited quadratic range curve is a **placeholder**, and pinhole projection is initially disabled. Measure height, downward pitch, offsets and yaw, then calibrate the range on the bench before driving to real detections. Runtime adjustments do not survive an app restart; copy measured values into the geometry defaults. The position test shows both models for comparison.
+We replaced the inherited quadratic range curve with pinhole projection because the camera angles and measured mount geometry give forward and lateral distances without fitting a distance curve. The model projects each detection onto a flat floor and uses the same camera geometry to decide which tracks an empty frame can clear.
+
+The [Limelight 3A field of view](https://docs.limelightvision.io/docs/docs-limelight/getting-started/limelight-3a#hardware-specifications) is 54.5 degrees horizontally and 42 degrees vertically. Pollen projection uses angles relative to the optical axis and rejects detections beyond 27.25 degrees left or right or 21 degrees up or down. The map uses the same field of view with its horizontal clearing margin.
+
+The mounting values in `LimelightGeometry` are inherited defaults. Measure the lens height, downward pitch, offsets and yaw on F.R.O.G. and enter them there. Use `LimelightPositionTest` to check the projected positions against known floor targets before driving to detections. Runtime height and pitch adjustments reset when the app restarts.
 
 ## Planning
 
@@ -171,7 +175,29 @@ HivePoseEstimator.Result fix = estimator.estimate(
 // captureTimeMs and usesAssumedValues. No robot pose is changed here.
 ```
 
-`fiducial` comes from an already-owned camera's `LLResult.getFiducialResults()`. Enable full 3D AprilTag tracking with the correct 3.25-inch black-square size. These are relative tag measurements, not a static Hive field-map pose or MT2 yaw. Gravity is the downward direction in robot forward/left/up axes, aligned to image exposure; if a level robot is assumed, pass `{0,0,-1}` and `gravityAssumed=true`. The adapter also supports `from_result(...)` for copying all usable tags from one frame. Results remain per-tag; there is no multi-tag optimizer or averaging layer.
+`fiducial` comes from an already-owned camera's `LLResult.getFiducialResults()`. Enable full 3D AprilTag tracking with the correct 3.25-inch black-square size. These are relative tag measurements, not a static Hive field-map pose or MT2 yaw. Gravity is the downward direction in robot forward/left/up axes, aligned to image exposure; if a level robot is assumed, pass `{0,0,-1}` and `gravityAssumed=true`.
+
+For multiple tags in one exposure, copy the frame and request one consensus pose:
+
+```java
+List<HivePoseEstimator.Observation> observations = HiveLimelightObservation.from_result(
+        cameraResult, captureTimeMs, timingAssumed);
+HivePoseEstimator.FrameResult frame = estimator.estimate_frame(
+        observations, gravityAtCapture, gravityAssumed);
+if (frame != null) {
+    // x, y, z and heading use the same field coordinates as the single-tag result.
+    // tagCount and tag_ids() identify the accepted tags.
+    // positionSpreadIn and headingSpreadDeg describe their agreement.
+}
+```
+
+The frame estimator solves the hinge geometry separately for every tag, then takes an equal-weight position mean and circular heading mean of a consistent group. Tags can belong to different Hives because every estimate uses the same field coordinates. The SDK supplies no calibrated per-tag covariance, so the estimator does not invent confidence weights. This is fusion of per-tag poses; it does not jointly fit image corners.
+
+Default limits are **6 inches of pairwise 3D position disagreement**, **10 degrees of pairwise heading disagreement**, and **10 degrees of hinge-axis/gravity disagreement per tag**. These are initial settings requiring hardware tuning. Pass a fourth argument, `new HivePoseEstimator.FrameConfig(positionIn, headingDeg, axisDeg)`, to override them. Null, unknown and unusable poses are skipped, and the axis-error gate is applied before consensus. Among the remaining poses, the largest seed-neighborhood must be unique, form a strict majority, and agree pairwise. Contradictory pairs, tied groups and bridge chains return `null`. A single usable tag produces a result with `tagCount == 1`; duplicate IDs or mixed timestamps invalidate the frame.
+
+`observationCount` records the supplied list size, `usableTagCount` records poses passing the individual checks, and `tagCount` counts contributors. `tag_ids()` returns a defensive sorted copy. The RMS position and wrapped-heading spreads measure agreement, **not absolute accuracy or covariance**: calibration, gravity and camera errors can affect all tags together. `usesAssumedValues` propagates from accepted observations and geometry. Matching timestamps alone do not establish a shared exposure; pass observations from one `LLResult` and supply gravity aligned to that exposure.
+
+The consensus search deliberately favors rejection when membership is ambiguous. It can reject an otherwise consistent majority if another tag agrees with only part of that majority and expands a seed's neighborhood into a non-pairwise group.
 
 The caller supplies exposure time on its own monotonic millisecond clock and handles freshness, duplicate frames and gravity alignment. Set `timingAssumed=true` when estimating exposure time from receipt/latencies; SDK staleness alone is not image age. Position is in the report's centered field frame: +X audience-right, +Y away from the audience, +Z up; heading is counterclockwise radians. It is not automatically converted into `VisionPose` or Pedro coordinates. `z` reports inferred robot height and `axisErrorDeg` reports axis/gravity disagreement before leveling; neither is an accuracy score or an automatic acceptance threshold.
 
@@ -188,4 +214,6 @@ Geometry comes from the [official manual, §9.6/§9.9 and Fig. 9-15–17](https:
 
 The native tag-to-sticker axis/sign convention and code alignment remain explicitly **assumed**, because the CAD lacks tag textures and Limelight's target-axis prose is handedness-ambiguous. The adapter's numerical rotation order is independently verified against official Limelight code and paired inverse-pose data. The physical print-side assumption and unknown robot mounting are also commented in `HiveGeometry`. Consequently default results have `usesAssumedValues=true`; they are provisional geometry estimates. Custom measured tag models and mounting can replace these defaults without changing the estimator.
 
-The desktop audit tests ±30° circular motion, the complete numerical example, 1,500 arbitrary full-pose cases with camera offsets and robot tilt, invalid inputs, immutable snapshots, SDK axis/unit conversion and one SDK-to-final-robot-pose case. Run `tools/limelight-audit/run.ps1`. This verifies software and SDK compatibility, not real-world accuracy or a 100-ms measurement deadline.
+The desktop audit tests ±30° circular motion, the complete numerical example, 1,500 arbitrary full-pose cases with camera offsets and robot tilt, invalid inputs, immutable snapshots, SDK axis/unit conversion and SDK-to-final-robot-pose cases. Multi-tag checks cover heading wraparound, consensus and outlier rejection, malformed frames, independently tilting Hives, nontrivial mounts and independent translation noise. Run `tools/limelight-audit/run.ps1`. This verifies software and SDK compatibility, not real-world accuracy or a 100-ms measurement deadline.
+
+Multi-tag validation on 16 November 2026: the full standalone audit passed against FTC 12.0.0/Pedro 3.0.1, including 4,720 multi-tag checks and 16 frame-adapter integration checks. In 1,000 synthetic four-tag samples with independent bounded translation noise and exact rotation, gravity, mounting and tag geometry, RMS position error decreased from 1.0056 inches for a typical individual tag to 0.5097 inches for the fused estimate. This experiment does not predict the benefit under correlated camera or calibration errors. No on-robot validation was performed.

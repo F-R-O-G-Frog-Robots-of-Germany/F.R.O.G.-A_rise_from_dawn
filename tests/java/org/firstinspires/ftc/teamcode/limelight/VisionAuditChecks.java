@@ -23,7 +23,7 @@ public final class VisionAuditChecks {
     private static void sequence_order() {
         PollenMap map = new PollenMap();
         VisionPose robot = new VisionPose(20, 20, 0);
-        map.update(Collections.singletonList(new Pollen(-1, new VisionPose(40, 20, 0), 1, 1)), robot, 3);
+        map.update(Collections.singletonList(new Pollen(-1, new VisionPose(48, 20, 0), 1, 1)), robot, 3);
         int id = map.snapshot().get(0).id;
         map.update(Collections.emptyList(), robot, 2);
         require(map.snapshot().size() == 1 && map.snapshot().get(0).id == id,
@@ -31,12 +31,11 @@ public final class VisionAuditChecks {
         map.update(Collections.emptyList(), robot, 3);
         require(map.snapshot().size() == 1, "Repeated sequence 3 preserves the latest map");
         map.update(Collections.emptyList(), robot, 4);
-        require(map.snapshot().isEmpty(), "New empty sequence 4 clears its wedge");
+        require(map.snapshot().isEmpty(), "New empty sequence 4 clears visible tracks");
     }
 
     private static void pinhole_geometry() {
         LimelightCalibration calibration = new LimelightCalibration();
-        calibration.usePinholeRange = true;
         calibration.cameraHeightIn = 10;
         double[] pitches = {10, 30, 60};
         double[] txs = {-25, -10, 0, 10, 25};
@@ -118,30 +117,33 @@ public final class VisionAuditChecks {
 
     private static void frustum_boundaries() {
         PollenMap map = new PollenMap();
+        map.config.nearIn = 24; // Keep the near range boundary inside the level camera's vertical FOV.
         VisionPose origin = new VisionPose(72, 72, 0);
-        require(!map.in_frustum(origin, new VisionPose(82.99, 72, 0)), "Inside near safety margin is invisible");
-        require(map.in_frustum(origin, new VisionPose(83, 72, 0)), "Near safe boundary is visible");
+        require(!map.in_frustum(origin, new VisionPose(98.99, 72, 0)), "Inside near safety margin is invisible");
+        require(map.in_frustum(origin, new VisionPose(99, 72, 0)), "Near safe boundary is visible");
         require(map.in_frustum(origin, new VisionPose(129, 72, 0)), "Far safe boundary is visible");
         require(!map.in_frustum(origin, new VisionPose(129.01, 72, 0)), "Beyond far safe boundary is invisible");
-        double edge = Math.toRadians(LimelightGeometry.HORIZONTAL_FOV_DEG / 2 - 4);
-        require(map.in_frustum(origin, new VisionPose(72 + 30 * Math.cos(edge - 1e-8),
-                72 + 30 * Math.sin(edge - 1e-8), 0)), "Inside angular margin is visible");
-        require(!map.in_frustum(origin, new VisionPose(72 + 30 * Math.cos(edge + 1e-8),
-                72 + 30 * Math.sin(edge + 1e-8), 0)), "Outside angular margin is invisible");
+        double edge = Math.toRadians(27.25 - 4);
+        require(map.in_frustum(origin, new VisionPose(102, 72 + 30 * Math.tan(edge - 1e-8), 0)),
+                "Inside angular margin is visible");
+        require(!map.in_frustum(origin, new VisionPose(102, 72 + 30 * Math.tan(edge + 1e-8), 0)),
+                "Outside angular margin is invisible");
+        map.config.hfovDeg = 62.5;
+        require(!map.in_frustum(origin, new VisionPose(102, 72 + 30 * Math.tan(edge + 1e-8), 0)),
+                "The map cannot widen the 3A field of view");
     }
 
     private static void calibrated_frustum() {
         Limelight camera = new Limelight();
-        camera.calibration.usePinholeRange = true;
         camera.calibration.cameraHeightIn = 10;
         camera.calibration.cameraPitchDeg = 0;
         PollenMap map = new PollenMap(camera);
         VisionPose robot = new VisionPose(72, 72, 0);
-        int unseen = map.inject(new VisionPose(87, 72, 0));
+        int unseen = map.inject(new VisionPose(97, 72, 0));
         map.inject(new VisionPose(102, 72, 0));
         map.update(Collections.emptyList(), robot, 1);
         require(map.snapshot().size() == 1 && map.snapshot().get(0).id == unseen,
-                "Level camera VFOV cannot clear15inch floor target but sees30inch floor target");
+                "Level 3A preserves a floor target 25 inches away but sees one 30 inches away");
         camera.calibration.cameraPitchDeg = 30;
         map.update(Collections.emptyList(), robot, 2);
         require(map.snapshot().isEmpty(), "Downward pitch brings that near-floor target into view");
