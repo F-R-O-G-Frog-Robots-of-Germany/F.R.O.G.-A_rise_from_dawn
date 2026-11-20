@@ -20,8 +20,8 @@ public final class CompConfig {
     /** Camera polling is independently off while the team works without Limelight hardware. */
     public static final boolean VISION_ENABLED = false;
 
-    /** -1 retains Android placement until the future robot can establish a useful control CPU. */
-    public static final int CONTROL_CORE = -1;
+    /** Control uses CPU 0; vision uses 1 and Butine uses 2 when started. CPU 3 is left available. */
+    public static final int CONTROL_CORE = 0;
 
     public static boolean panels_enabled() {
         return !COMP_MODE;

@@ -36,6 +36,7 @@ public final class PerformanceComparisonChecks {
         configuration_snapshots();
         single_change_references();
         all_minus_one_dependencies();
+        cpu_placement_workload();
         repeat_order();
         System.out.println("Passed " + checks + " performance comparison checks");
     }
@@ -296,9 +297,25 @@ public final class PerformanceComparisonChecks {
         check(selected.metadata().equals(before), "All-minus-one preserves the selected config");
     }
 
+    private static void cpu_placement_workload() {
+        Config selected = selected_config();
+        String expected = selected.metadata();
+        Map<String, Trial> trials = index_trials(PerformanceComparison.build_trials(selected, Suite.CPU_PLACEMENT, 1));
+        check(trials.keySet().equals(keys("CPU_DEFAULT", "CPU_0", "CPU_3")), "Exactly three CPU placement variants");
+        check(trials.get("CPU_DEFAULT").controlCore == -1, "Baseline inherits scheduler affinity");
+        check(trials.get("CPU_0").controlCore == 0, "CPU 0 trial requests CPU 0");
+        check(trials.get("CPU_3").controlCore == 3, "CPU 3 trial requests CPU 3");
+        for (Trial trial : trials.values()) {
+            check(trial.reference.equals("CPU_DEFAULT"), "Placement variants share the inherited-affinity reference");
+            check(trial.config != selected && trial.config.metadata().equals(expected),
+                    "Each placement uses a snapshot of the same workload and outputs");
+        }
+    }
+
     private static void repeat_order() {
         Config selected = selected_config();
-        for (Suite suite : new Suite[]{Suite.BASELINE_AND_ALL, Suite.SINGLE_CHANGES, Suite.ALL_MINUS_ONE}) {
+        for (Suite suite : new Suite[]{Suite.BASELINE_AND_ALL, Suite.SINGLE_CHANGES, Suite.ALL_MINUS_ONE,
+                Suite.CPU_PLACEMENT}) {
             List<Trial> first = PerformanceComparison.build_trials(selected, suite, 3);
             List<Trial> second = PerformanceComparison.build_trials(selected, suite, 3);
             int groupSize = first.size() / 3;

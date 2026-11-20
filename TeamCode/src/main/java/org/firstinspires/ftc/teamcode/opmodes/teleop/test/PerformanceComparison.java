@@ -3,7 +3,9 @@ package org.firstinspires.ftc.teamcode.opmodes.teleop.test;
 import com.qualcomm.hardware.lynx.LynxModule;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
+import com.qualcomm.robotcore.util.RobotLog;
 import org.firstinspires.ftc.robotcore.internal.system.AppUtil;
+import org.firstinspires.ftc.teamcode.core.control.ControlThreadAffinity;
 import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
@@ -15,7 +17,7 @@ import java.util.Locale;
 import java.util.Random;
 
 /**
- * Isolated P1-P10 comparison. No robot subsystem, follower, or background sampler is started.
+ * Isolated P1-P10 and CPU placement comparison. No robot subsystem, follower, or background sampler is started.
  * D-pad selects/edits settings; X baseline; Y optimized; A runs; B ends a run and calculates.
  * START retries the last CSV export. Both bumpers must stay held for any live actuation.
  * Statistics, result formatting, and files are processed only AFTER recording and motor stop.
@@ -37,7 +39,7 @@ public final class PerformanceComparison extends LinearOpMode {
     enum CommandProfile { CONSTANT, SMALL_CHANGES, STEPS }
     enum PoseProfile { STATIONARY, HEADING_ONLY, MOVING }
     enum ShotMode { ALLOCATE, REUSE, CACHE_UNCHANGED }
-    enum Suite { CUSTOM, BASELINE_AND_ALL, SINGLE_CHANGES, ALL_MINUS_ONE }
+    enum Suite { CUSTOM, BASELINE_AND_ALL, SINGLE_CHANGES, ALL_MINUS_ONE, CPU_PLACEMENT }
 
     static final class Config {
         LynxModule.BulkCachingMode bulkMode = LynxModule.BulkCachingMode.MANUAL;
@@ -78,8 +80,18 @@ public final class PerformanceComparison extends LinearOpMode {
         final String label, reference;
         final Config config;
         final int repeat;
+        final int controlCore;
+
         Trial(String label, String reference, Config config, int repeat) {
-            this.label = label; this.reference = reference; this.config = config.copy(); this.repeat = repeat;
+            this(label, reference, config, repeat, -1);
+        }
+
+        Trial(String label, String reference, Config config, int repeat, int controlCore) {
+            this.label = label;
+            this.reference = reference;
+            this.config = config.copy();
+            this.repeat = repeat;
+            this.controlCore = controlCore;
         }
     }
 
@@ -88,6 +100,7 @@ public final class PerformanceComparison extends LinearOpMode {
     private Suite suite = Suite.CUSTOM;
     private int selected, durationIndex = 1, warmupIndex = 1, repeatsIndex;
     private Workload workload;
+    private ControlThreadAffinity trialAffinity;
     private File sessionDirectory;
     private String status = "Configure, then A to run. Outputs start in SHADOW simulation.";
     private String phase = "WARMUP", lastMetadata, lastRunId, lastExportError = "";
@@ -134,7 +147,11 @@ public final class PerformanceComparison extends LinearOpMode {
                 idle();
             }
         } finally {
-            if (workload != null) workload.restore();
+            try {
+                if (workload != null) workload.restore();
+            } finally {
+                restore_trial_affinity();
+            }
         }
     }
 
@@ -159,6 +176,9 @@ public final class PerformanceComparison extends LinearOpMode {
 
     /** Capture previous work at the NEXT loop start, pairing it with its own full cycle. */
     private boolean run_trial(Trial trial, int order) {
+        if (trialAffinity != null) {
+            throw new IllegalStateException("Original CPU mask could not be restored. Restart the OpMode.");
+        }
         Config c = trial.config;
         // The shared raw buffer is about to change; never export it with an older run's metadata.
         lastSummary = null;
@@ -169,7 +189,17 @@ public final class PerformanceComparison extends LinearOpMode {
         boolean aborted = false;
         long requestedNanos = DURATIONS_S[durationIndex] * 1_000_000_000L;
         long warmupNanos = WARMUPS_S[warmupIndex] * 1_000_000_000L;
+        String affinityDetail = "Inherited Android affinity";
+        boolean affinityRestored;
         try {
+            if (trial.controlCore >= 0) {
+                trialAffinity = new ControlThreadAffinity();
+                trialAffinity.bind(trial.controlCore);
+                affinityDetail = trialAffinity.detail();
+                if (!trialAffinity.applied()) {
+                    throw new IllegalStateException("CPU placement could not be verified. " + affinityDetail);
+                }
+            }
             workload.prepare(c);
             phase = "WARMUP";
             long trialStart = System.nanoTime();
@@ -215,9 +245,14 @@ public final class PerformanceComparison extends LinearOpMode {
             }
             if (isStopRequested()) { endReason = "STOP_REQUESTED"; aborted = true; }
         } finally {
-            // Stop motors before sorting/formatting/file I/O. All cleanup is outside recorded cycles.
-            workload.stop();
+            // Stop motors before restoring affinity or processing results.
+            try {
+                workload.stop();
+            } finally {
+                affinityRestored = restore_trial_affinity();
+            }
         }
+        if (!affinityRestored) throw new IllegalStateException(trialAffinity.detail());
         // DS STOP prioritizes prompt cleanup. Use B to end, calculate, and save a partial recording.
         if (isStopRequested()) return true;
         lastElapsedS = pairedEnd > firstStart && firstStart != 0 ? (pairedEnd - firstStart) / 1e9 : 0;
@@ -228,6 +263,7 @@ public final class PerformanceComparison extends LinearOpMode {
         lastSummary = recorder.summarize();
         lastMetadata = "run_id=" + lastRunId + "\nreference=" + trial.reference + "\nrepeat=" + trial.repeat
                 + "\norder=" + order + "\norder_seed=" + ORDER_SEED + "\nsuite=" + suite
+                + "\nrequested_control_core=" + trial.controlCore + "\ncontrol_affinity_at_setup=" + affinityDetail
                 + "\nend_reason=" + endReason + "\nrequested_duration_ns=" + requestedNanos
                 + "\nwarmup_ns=" + warmupNanos + "\ncaptured_elapsed_s=" + lastElapsedS
                 + "\nactual_hz=" + lastHz + "\nsdk_telemetry_send_interval_ms=100"
@@ -241,6 +277,16 @@ public final class PerformanceComparison extends LinearOpMode {
         export_last();
         status = endReason + ": " + recorder.count + " samples. Stats calculated AFTER stop.";
         return aborted;
+    }
+
+    private boolean restore_trial_affinity() {
+        if (trialAffinity == null) return true;
+        if (!trialAffinity.restore()) {
+            RobotLog.ee("PerformanceComparison", trialAffinity.detail());
+            return false;
+        }
+        trialAffinity = null;
+        return true;
     }
 
     private boolean cancelled(Config c) { return gamepad1.b || (c.live() && !armed()); }
@@ -385,10 +431,15 @@ public final class PerformanceComparison extends LinearOpMode {
         Random random = new Random(ORDER_SEED);
         for (int repeat = 1; repeat <= repeats; repeat++) {
             List<Trial> group = new ArrayList<>();
-            Config base = selected.copy(); apply_baseline(base);
-            Config all = selected.copy(); apply_optimized(all);
             if (suite == Suite.CUSTOM) group.add(new Trial("CUSTOM", "CUSTOM", selected, repeat));
-            else {
+            else if (suite == Suite.CPU_PLACEMENT) {
+                group.add(new Trial("CPU_DEFAULT", "CPU_DEFAULT", selected, repeat));
+                group.add(new Trial("CPU_0", "CPU_DEFAULT", selected, repeat, 0));
+                group.add(new Trial("CPU_3", "CPU_DEFAULT", selected, repeat, 3));
+                Collections.shuffle(group, random);
+            } else {
+                Config base = selected.copy(); apply_baseline(base);
+                Config all = selected.copy(); apply_optimized(all);
                 group.add(new Trial("BASELINE", "BASELINE", base, repeat));
                 group.add(new Trial("ALL", "BASELINE", all, repeat));
                 if (suite == Suite.SINGLE_CHANGES) {

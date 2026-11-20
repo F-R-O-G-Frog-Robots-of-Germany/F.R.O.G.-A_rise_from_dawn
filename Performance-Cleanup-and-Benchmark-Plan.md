@@ -189,6 +189,18 @@ The settings expose P1-P10 individually, three command profiles, three synthetic
 
 P6's single-change reference is the paired P5 300 ms variant. An ablation that removes P5 also removes P6 and is explicitly named `WITHOUT_P5_AND_P6`; staggering an every-loop pair would reduce per-sensor refresh frequency. Paired and staggered timed reads use fixed-origin deadlines with the same nominal per-sensor interval and no catch-up backlog.
 
+### CPU placement suite
+
+Deploy the Robot Controller APK to a powered Control Hub and select **Performance comparison** in the Driver Station's Test group. In this checkout, pressing INIT opens the benchmark settings directly.
+
+1. Use D-pad up/down to select **Suite** and left/right to choose `CPU_PLACEMENT`.
+2. Set **Repeats** to **3**. Keep the other settings fixed, including the default **SHADOW** output and disabled live hood writes.
+3. Press **START** on the Driver Station, then press **A** on gamepad 1. Each repeat runs the same stationary workload with inherited scheduler placement, CPU 0, and CPU 3.
+
+The benchmark verifies each requested CPU binding before warm-up and restores the original affinity after the trial. In the CSV exports, group the `cycle` summary rows by `CPU_DEFAULT`, `CPU_0`, and `CPU_3`. Compare p99 cycle time and counts above 10 or 20 ms across repeats. Divide those counts by the recorded sample count if runs contain different numbers of cycles.
+
+The suite can be built offline. Timing results require the deployed APK running on the Control Hub and describe this stationary workload.
+
 ### What is measured
 
 In the stationary microbenchmark menu, the default **SHADOW** output mode performs real reads on the available drive/range devices and simulates output policies. It makes no motor or servo SDK write calls in the measured workload. This mode measures cache/computation overhead, not live write transport. Every CSV states the selected mode, unavailable devices, simulated channels, and actual SDK-call counts. Normal mode uses real robot outputs and has no SHADOW setting.
