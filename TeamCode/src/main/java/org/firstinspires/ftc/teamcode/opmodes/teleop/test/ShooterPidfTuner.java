@@ -27,7 +27,7 @@ import org.firstinspires.ftc.teamcode.subsystems.Shooter;
  *     <li>Y/B: increase/decrease target RPM by 100.</li>
  *     <li>D-pad up/right/down/left: select P/I/D/F respectively.</li>
  *     <li>Right bumper/left bumper: increase/decrease the selected PIDF value.</li>
- *     <li>Back: restore 4000 RPM and the default PIDF values.</li>
+ *     <li>Back: restore 1000 RPM and the default PIDF values.</li>
  * </ul>
  * Controls are edge-triggered; tap a button to make one change.</p>
  * <p>Gamepad 2: Y toggles both distance models; X selects RPM or hood coefficients;
@@ -37,7 +37,7 @@ import org.firstinspires.ftc.teamcode.subsystems.Shooter;
  */
 @TeleOp(name = "Shooter PIDF Tuner", group = "Test")
 public class ShooterPidfTuner extends LinearOpMode {
-    private static final double DEFAULT_TARGET_RPM = 4000.0;
+    private static final double DEFAULT_TARGET_RPM = 1000.0;
     private static final double RPM_STEP = 100.0;
     private static final int LOOP_PERIOD_MS = 40;
     private static final double START_X = 9.0;
@@ -100,15 +100,17 @@ public class ShooterPidfTuner extends LinearOpMode {
             follower = Constants.create_follower(hardwareMap);
             alliance = LastPositionStorage.get_current_alliance();
             follower.setPose(new Pose(START_X, START_Y, START_HEADING));
-            follower.update();
             telemetry.setMsTransmissionInterval(LOOP_PERIOD_MS);
 
             while (opModeInInit()) {
                 if (gamepad2.bWasPressed()) {
                     alliance = alliance == Alliance.RED ? Alliance.BLUE : Alliance.RED;
                 }
-                telemetry.addLine("Shooter PIDF tuner ready; start at (9, 9), heading 0 deg");
+                follower.update();
+                Pose pose = follower.pose();
                 telemetry.addData("Alliance (G2 B toggles during INIT)", alliance);
+                add_position_telemetry(pose, target_hive(pose));
+                telemetry.addData("Target RPM", "%.1f", targetRpm);
                 telemetry.addLine("Start: toggle | Y/B: RPM | D-pad: P/I/D/F");
                 telemetry.addLine("G1 X: disable/enable shooterMotorRight (both motors enabled by default)");
                 telemetry.addLine("Bumpers: decrease/increase selected PIDF");
@@ -116,7 +118,7 @@ public class ShooterPidfTuner extends LinearOpMode {
                 telemetry.addLine("G2 up/down: manual hood +/-1 deg; A: capture sample");
                 telemetry.addLine("Edits are local to this run; no competition constants are changed");
                 telemetry.update();
-                idle();
+                sleep(LOOP_PERIOD_MS);
             }
 
             waitForStart();
@@ -130,8 +132,7 @@ public class ShooterPidfTuner extends LinearOpMode {
                 follower.update();
                 update_controls();
                 Pose pose = follower.pose();
-                boolean poseValid = SensorReadings.is_valid(pose);
-                Shooter.HiveDistance hive = Shooter.nearest_hive(pose.x(), pose.y(), alliance, poseValid);
+                Shooter.HiveDistance hive = target_hive(pose);
                 SensorReadings.Sample velocity = shooterMotorLeft.sample_velocity();
                 SensorReadings.Sample velocity2 = shooterMotorRight.sample_velocity();
                 measuredRpm = velocity.get_value() / Shooter.ENCODER_TICKS_PER_REV * 60.0;
@@ -323,10 +324,31 @@ public class ShooterPidfTuner extends LinearOpMode {
         }
     }
 
-    private void add_telemetry(Pose pose, Shooter.HiveDistance nearestHive) {
-        double robotX = pose.x();
-        double robotY = pose.y();
+    private Shooter.HiveDistance target_hive(Pose pose) {
+        if (!SensorReadings.is_valid(pose)) {
+            return Shooter.nearest_hive(Double.NaN, Double.NaN, alliance, false);
+        }
+        return Shooter.nearest_hive(pose.x(), pose.y(), alliance, true);
+    }
 
+    private void add_position_telemetry(Pose pose, Shooter.HiveDistance hive) {
+        telemetry.addData("Target hive", hive.valid ? hive.position.name : "Unavailable");
+        telemetry.addData("Start position", "x %.2f in, y %.2f in, heading %.1f deg",
+                START_X, START_Y, Math.toDegrees(START_HEADING));
+        if (SensorReadings.is_valid(pose)) {
+            telemetry.addData("Current position", "x %.2f in, y %.2f in, heading %.1f deg",
+                    pose.x(), pose.y(), Math.toDegrees(pose.heading()));
+        } else {
+            telemetry.addData("Current position", "Unavailable");
+        }
+        if (hive.valid) {
+            telemetry.addData("Distance to target hive [in]", "%.2f", hive.distance);
+        }
+    }
+
+    private void add_telemetry(Pose pose, Shooter.HiveDistance hive) {
+        telemetry.addData("Alliance", alliance);
+        add_position_telemetry(pose, hive);
         telemetry.addData("Shooter", shooterEnabled ? "RUNNING" : "OFF");
         telemetry.addData("Right shooter (G1 X toggles)", rightMotorEnabled ? "ENABLED" : "DISABLED");
         telemetry.addData("Target RPM", "%.1f", commandedRpm);
@@ -356,10 +378,6 @@ public class ShooterPidfTuner extends LinearOpMode {
         telemetry.addData("I", "%.8f", pidf.i);
         telemetry.addData("D", "%.8f", pidf.d);
         telemetry.addData("F", "%.8f", pidf.f);
-        telemetry.addData("Alliance", alliance);
-        telemetry.addData("Robot position", "x %.2f, y %.2f", robotX, robotY);
-        telemetry.addData("Target hive", nearestHive.position.name);
-        telemetry.addData("Distance to nearest hive [in]", "%.2f", nearestHive.distance);
         telemetry.addData("Loop", LOOP_PERIOD_MS + " ms");
         telemetry.update();
     }
