@@ -85,6 +85,7 @@ public class Shooter {
     private Units.Alliance hiveAlliance;
     private boolean hivePoseValid;
     private boolean preparingShot;
+    private ShotSolution approachShot;
     // Latched only after the cached start gates pass; target RPM/hood remain fixed until an explicit stop.
     private boolean shootingActive;
     private State state = State.FLOAT;
@@ -125,6 +126,7 @@ public class Shooter {
         velocityValid = false;
         motorControlValid = false;
         preparingShot = false;
+        approachShot = null;
         shootingActive = false;
         state = State.FLOAT;
     }
@@ -280,8 +282,20 @@ public class Shooter {
     }
 
     public void prepare_shot() {
+        approachShot = null;
         preparingShot = true;
         if (!intakeSubsystem.is_shooting_requested()) state = State.PREPARE;
+    }
+
+    /** Prepare the fitted setpoint for a planned field position without requesting feed. */
+    public void prepare_shot_at(double robotX, double robotY) {
+        if (bypassEnabled || intakeSubsystem.is_shooting_requested()) return;
+        HiveDistance destination = nearest_hive(robotX, robotY, alliance);
+        if (!destination.valid) return;
+        ShotSolution solution = calculate_shot_solution_validated(destination.distance);
+        if (!solution.valid) return;
+        prepare_shot();
+        approachShot = solution;
     }
 
     public boolean shot_in_progress() { return shootingActive && intakeSubsystem.is_shooting_requested(); }
@@ -301,6 +315,7 @@ public class Shooter {
     public void stop_shooting() {
         shootingActive = false;
         preparingShot = false;
+        approachShot = null;
         motorControlValid = false; // A later shot must earn readiness again after this explicit stop.
         if (intakeSubsystem != null) intakeSubsystem.stop_feed();
         state = intakeSubsystem != null && intakeSubsystem.is_scoring_requested()
@@ -396,7 +411,7 @@ public class Shooter {
                 targetRpm = fixedRpm;
                 targetHoodAngle = fixedHoodAngle;
             } else if (targetHive.valid) {
-                ShotSolution solution = calculate_shot_solution_validated(targetDistance);
+                ShotSolution solution = approachShot != null ? approachShot : calculate_shot_solution_validated(targetDistance);
                 targetAvailable = solution.valid;
                 if (targetAvailable) {
                     targetRpm = solution.rpm;
@@ -435,6 +450,7 @@ public class Shooter {
     public void stop() {
         shootingActive = false;
         preparingShot = false;
+        approachShot = null;
         state = State.FLOAT;
         reset_controller();
         motorControlValid = false;
