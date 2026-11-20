@@ -24,6 +24,7 @@ public final class Constants {
     private static final String FRONT_RIGHT_MOTOR = "rightFront";
     private static final String BACK_RIGHT_MOTOR = "rightRear";
     private static final String PINPOINT_NAME = "pinpoint";
+    private static final boolean PREFER_COMPACT_PINPOINT_BULK_READS = true;
 
     public static final MecanumConfig drivetrainConfig = new MecanumConfig(c -> {
         c.frontLeftName.set(FRONT_LEFT_MOTOR);
@@ -86,9 +87,13 @@ public final class Constants {
 
     public static Follower create_follower(HardwareMap hardwareMap) {
         return new Follower(
-                new PinpointLocalizer(hardwareMap, localizerConfig),
+                PinpointBulkReads.create(hardwareMap, localizerConfig, PREFER_COMPACT_PINPOINT_BULK_READS),
                 new Mecanum(hardwareMap, drivetrainConfig),
                 new Foresight(foresightConfig)
         );
+    }
+
+    public static PinpointLocalizer create_tuning_localizer(HardwareMap hardwareMap, PinpointConfig config) {
+        return PinpointBulkReads.create(hardwareMap, config, false);
     }
 }

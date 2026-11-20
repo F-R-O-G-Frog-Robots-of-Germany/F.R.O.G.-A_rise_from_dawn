@@ -9,6 +9,7 @@ import com.pedropathing.tuning.autotune.TuningOpMode;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.teamcode.core.pedro.Constants;
 
 import java.util.List;
 import java.util.OptionalDouble;
@@ -113,7 +114,7 @@ public class PinpointTuner extends Procedure {
         @Override
         protected Double runTuningOpMode() {
             PinpointConfig config = create_config(name, PodType.CUSTOM, OptionalDouble.of(1.0), false, false, 0.0, 0.0);
-            PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap, config);
+            PinpointLocalizer localizer = Constants.create_tuning_localizer(hardwareMap, config);
             localizer.setPose(new Pose(0, 0));
             waitForStart();
             while (!isStopRequested()) {
@@ -137,7 +138,7 @@ public class PinpointTuner extends Procedure {
 
         @Override
         protected Boolean runTuningOpMode() {
-            PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap,
+            PinpointLocalizer localizer = Constants.create_tuning_localizer(hardwareMap,
                     create_config(name, podType, customPodScalar, false, false, 0.0, 0.0));
             localizer.setPose(new Pose(0, 0));
             waitForStart();
@@ -162,7 +163,7 @@ public class PinpointTuner extends Procedure {
 
         @Override
         protected Boolean runTuningOpMode() {
-            PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap,
+            PinpointLocalizer localizer = Constants.create_tuning_localizer(hardwareMap,
                     create_config(name, podType, customPodScalar, false, false, 0.0, 0.0));
             localizer.setPose(new Pose(0, 0));
             waitForStart();
@@ -209,7 +210,7 @@ public class PinpointTuner extends Procedure {
                     c.offsetUnits.set(DistanceUnit.INCH);
                 });
             }
-            PinpointLocalizer localizer = new PinpointLocalizer(hardwareMap, config);
+            PinpointLocalizer localizer = Constants.create_tuning_localizer(hardwareMap, config);
             if (customPodScalar.isPresent()) {
                 localizer.reset();
             }
