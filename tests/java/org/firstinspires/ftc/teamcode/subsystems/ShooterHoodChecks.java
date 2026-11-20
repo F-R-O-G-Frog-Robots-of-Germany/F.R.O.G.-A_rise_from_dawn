@@ -188,36 +188,85 @@ public final class ShooterHoodChecks {
     }
 
     private static void check_intake_samples() throws Exception {
-        Intake intake = new Intake();
+        long[] now = {0};
+        long spacing = 150_000_000L;
+        Intake intake = new Intake(() -> now[0]);
         double[] lower = {Double.NaN}, upper = {Double.POSITIVE_INFINITY};
         int[] reads = {0, 0};
-        ColorRangeSensor low = distance_sensor(lower, reads, 0);
-        ColorRangeSensor high = distance_sensor(upper, reads, 1);
+        long[] readNanos = {0, 0};
+        ColorRangeSensor low = distance_sensor(lower, reads, 0, now, readNanos);
+        ColorRangeSensor high = distance_sensor(upper, reads, 1, now, readNanos);
         field(intake, "colorSensorLow", low);
         field(intake, "colorSensorHigh", high);
         check(!intake.loaded() && !intake.sensor_readings_valid(), "invalid first intake samples cannot report loaded");
         close(intake.get_lower_distance().mm(), 0);
         close(intake.get_upper_distance().mm(), 0);
-        check(reads[0] == 1 && reads[1] == 1, "distance getters reuse the cached pair");
+        check(reads[0] == 1 && reads[1] == 0, "first read only samples the lower sensor");
+        now[0] += spacing - 1;
+        check(!intake.sensor_readings_valid() && reads[1] == 0, "upper read waits its full offset");
+        now[0]++;
+        check(!intake.sensor_readings_valid() && reads[1] == 1, "upper read follows without renewing lower");
         lower[0] = 10; upper[0] = 20;
-        field(intake, "lastSensorReadNanos", 0L);
+        now[0] += spacing;
+        check(!intake.sensor_readings_valid(), "both sensors must recover");
+        now[0] += spacing;
         check(intake.sensor_readings_valid(), "intake samples recover");
         close(intake.get_lower_distance().mm(), 10);
         close(intake.get_upper_distance().mm(), 20);
         for (double fault : new double[]{Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
             lower[0] = fault;
-            field(intake, "lastSensorReadNanos", 0L);
+            now[0] += spacing;
             check(!intake.loaded() && !intake.sensor_readings_valid(), "rejected intake sample is unavailable");
             close(intake.get_lower_distance().mm(), 10);
+            now[0] += spacing;
+            check(!intake.sensor_readings_valid(), "a valid upper sample cannot mask a lower fault");
         }
         intake.get_sensor_telemetry();
         check(reads[0] == 5 && reads[1] == 5, "intake telemetry does not reread samples");
+
+        lower[0] = -10;
+        upper[0] = -20;
+        now[0] += spacing;
+        check(!intake.loaded(), "an empty upper sample cannot report full");
+        now[0] += spacing;
+        check(intake.loaded(), "both fresh simulated occupied samples report full");
+        now[0] += 400_000_000L;
+        check(!intake.loaded() && !intake.sensor_readings_valid(), "a stall leaves the other sensor sample stale");
+        check(reads[0] == 7 && reads[1] == 6, "missed deadlines cause only one read");
+        now[0] += spacing;
+        check(intake.loaded(), "both samples fresh again after the next read");
+
+        now[0] += 260_000_000L;
+        check(!intake.loaded(), "samples that are individually fresh but too far apart cannot latch full");
+        now[0] += spacing;
+        check(intake.loaded(), "the next on-time pair restores full detection");
+
+        DcMotorEx transfer = (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(),
+                new Class<?>[]{DcMotorEx.class}, (proxy, method, values) -> null);
+        field(intake, "transferMotor", new CachedMotor(transfer, 0.01));
+        intake.transfer_forward();
+        intake.stop_feed();
+        check(!intake.loaded() && !intake.sensor_readings_valid(), "release discards the pre-shot upper sample");
+        close(intake.get_transfer_power(), 0);
+        now[0] += spacing;
+        check(intake.loaded(), "release accepts a pair only once both reads are new");
+
+        readNanos[0] = 210_000_000L;
+        now[0] += spacing;
+        int upperReads = reads[1];
+        check(!intake.loaded() && !intake.sensor_readings_valid(), "a slow lower read can age out the upper sample");
+        check(reads[1] == upperReads, "slow lower read does not immediately trigger the upper read");
     }
 
-    private static ColorRangeSensor distance_sensor(double[] distance, int[] reads, int index) {
+    private static ColorRangeSensor distance_sensor(double[] distance, int[] reads, int index,
+                                                    long[] now, long[] readNanos) {
         return (ColorRangeSensor) Proxy.newProxyInstance(ColorRangeSensor.class.getClassLoader(),
                 new Class<?>[]{ColorRangeSensor.class}, (proxy, method, values) -> {
-                    if (method.getName().equals("getDistance")) { reads[index]++; return distance[0]; }
+                    if (method.getName().equals("getDistance")) {
+                        reads[index]++;
+                        now[0] += readNanos[index];
+                        return distance[0];
+                    }
                     return null;
                 });
     }

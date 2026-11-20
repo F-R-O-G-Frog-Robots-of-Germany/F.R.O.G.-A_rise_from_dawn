@@ -38,6 +38,7 @@ public final class PollenFlowChecks {
         encoder_sample_recovery();
         full_load_lifecycle();
         deferred_shot_targets();
+        approach_preparation();
         System.out.println("Production-state matrix: " + matrixCases + " combinations passed");
         System.out.println("Production loaded() implementation: " + sensorCases + " distance pairs passed");
         System.out.println("Production TeleOp trigger sequences: " + sequenceChecks + " assertions passed");
@@ -105,9 +106,12 @@ public final class PollenFlowChecks {
     private static void sensor_cases() throws Exception {
         double[] readings = {-1, 0, 10, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
         for (double lower : readings) for (double upper : readings) {
-            Intake intake = new Intake();
+            long[] now = {0};
+            Intake intake = new Intake(() -> now[0]);
             set(intake, Intake.class, "colorSensorLow", sensor(lower));
             set(intake, Intake.class, "colorSensorHigh", sensor(upper));
+            check(!intake.loaded(), "a single measurement cannot report loaded");
+            now[0] = 150_000_000L;
             boolean valid = Double.isFinite(lower) && Double.isFinite(upper);
             check(intake.sensor_readings_valid() == valid, "finite sensor pair");
             check(intake.loaded() == (valid && lower < 0 && upper < 0), "zero threshold loaded result");
@@ -238,9 +242,7 @@ public final class PollenFlowChecks {
         check(!rig.intake.full_load_held(), "feeding clears full hold");
         close(rig.intake.get_intake_power(), 1, "shooting overrides full stop");
         close(rig.intake.get_transfer_power(), 1, "shooting uses transfer");
-        set(rig.intake, Intake.class, "sensorReadingsInitialized", true);
         rig.shooter.stop_shooting();
-        check(!(boolean) field(Intake.class, "sensorReadingsInitialized").get(rig.intake), "post-shot full reading must be refreshed");
         rig.intake.collect(); rig.shooter.update();
         close(rig.intake.get_intake_power(), 1, "not-full post-shot collection resumes");
         rig.intake.loaded = true; rig.shooter.update();
@@ -425,6 +427,33 @@ public final class PollenFlowChecks {
         close(rig.shooter.get_target_rpm(), 4000, "stored RPM applies after shot");
         close(rig.shooter.get_target_hood_angle(), 60, "stored hood applies after shot");
         check(!rig.shooter.hood_ready(), "new hood command must settle for the next shot");
+    }
+
+    private static void approach_preparation() throws Exception {
+        Rig rig = new Rig();
+        rig.shooter.prepare_shot_at(12, 9);
+        check(rig.shooter.get_state() == Shooter.State.FLOAT, "fixed RPM skips fitted approach preparation");
+
+        rig.shooter.set_bypass_enabled(false);
+        rig.shooter.prepare_shot_at(Double.NaN, 9);
+        check(rig.shooter.get_state() == Shooter.State.FLOAT, "invalid endpoint leaves preparation off");
+
+        rig.shooter.prepare_shot_at(12, 9);
+        check(rig.shooter.get_state() == Shooter.State.PREPARE && !rig.intake.is_shooting_requested(),
+                "an accepted endpoint starts preparation without requesting feed");
+        // The current fitted curves are constant, so inject a distinct approach solution.
+        Shooter.ShotSolution approach = Shooter.calculate_shot_solution(12, 0, 0, 3200, 0, 0, 50);
+        set(rig.shooter, Shooter.class, "approachShot", approach);
+        rig.shooter.update(9, 10, true);
+        close(rig.shooter.get_target_rpm(), approach.rpm, "approach uses its saved RPM while moving");
+        close(rig.shooter.get_target_hood_angle(), approach.hoodAngleDegrees, "approach uses its saved hood angle");
+        close(rig.intake.get_transfer_power(), 0, "approach never starts transfer on its own");
+
+        rig.shooter.prepare_shot();
+        rig.shooter.update(9, 10, true);
+        Shooter.ShotSolution live = Shooter.calculate_shot_solution(rig.shooter.get_target_distance());
+        close(rig.shooter.get_target_rpm(), live.rpm, "arrival resumes live targeting before feed");
+        close(rig.shooter.get_target_hood_angle(), live.hoodAngleDegrees, "arrival resumes live hood targeting");
     }
 
     private static final class GivenIntake extends Intake {

@@ -10,12 +10,25 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
+import java.util.function.LongSupplier;
+
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 import org.firstinspires.ftc.teamcode.core.units.Units;
 
 public class Intake {
+    private final LongSupplier nanoClock;
+
+    public Intake() {
+        this(System::nanoTime);
+    }
+
+    Intake(LongSupplier nanoClock) {
+        this.nanoClock = nanoClock;
+        reset_sensor_schedule();
+    }
+
     // Intake motor and controls
     private CachedMotor intakeMotor;
     private enum IntakeMode {OFF, FORWARD, REVERSE}
@@ -134,24 +147,47 @@ public class Intake {
     }
 
     // Color sensors and sensor readings
-    private static final long SENSOR_READ_INTERVAL_NANOS = 300_000_000L;
+    // Alternate sensors every 150 ms, for a nominal 300 ms per sensor.
+    private static final long SENSOR_READ_SPACING_NANOS = 150_000_000L;
+    // Allow 50 ms of I²C and scheduling delay beyond the nominal age and pair spacing.
+    private static final long MAX_SENSOR_AGE_NANOS = 350_000_000L;
+    private static final long MAX_PAIR_SPACING_NANOS = 200_000_000L;
     private ColorRangeSensor colorSensorLow;
     private ColorRangeSensor colorSensorHigh;
     private final SensorReadings.Sample upperDistance = new SensorReadings.Sample();
     private final SensorReadings.Sample lowerDistance = new SensorReadings.Sample();
-    private long lastSensorReadNanos;
-    private boolean sensorReadingsInitialized;
+    private long nextSensorReadNanos;
+    private long lastLowerReadNanos;
+    private long lastUpperReadNanos;
+    private boolean readUpperNext;
+    private boolean haveSensorPair;
     private static final Units.Length EMPTY_UPPER_DISTANCE = mm(0); // tune pls, placeholder value
     private static final Units.Length EMPTY_LOWER_DISTANCE = mm(0); // tune pls, placeholder value
 
-    private synchronized void refresh_sensor_readings() {
-        long now = System.nanoTime();
-        if (!sensorReadingsInitialized || now - lastSensorReadNanos >= SENSOR_READ_INTERVAL_NANOS) {
-            lowerDistance.update(colorSensorLow.getDistance(DistanceUnit.MM));
+    /** Caller holds the monitor. Return the timestamp used to judge both samples. */
+    private long refresh_sensor_readings() {
+        long now = nanoClock.getAsLong();
+        if (now - nextSensorReadNanos < 0) return now;
+
+        if (readUpperNext) {
             upperDistance.update(colorSensorHigh.getDistance(DistanceUnit.MM));
-            lastSensorReadNanos = now;
-            sensorReadingsInitialized = true;
+            lastUpperReadNanos = now;
+            haveSensorPair = true;
+        } else {
+            lowerDistance.update(colorSensorLow.getDistance(DistanceUnit.MM));
+            lastLowerReadNanos = now;
         }
+        readUpperNext = !readUpperNext;
+        // Space reads from completion so a slow call never queues an immediate catch-up read.
+        now = nanoClock.getAsLong();
+        nextSensorReadNanos = now + SENSOR_READ_SPACING_NANOS;
+        return now;
+    }
+
+    private synchronized void reset_sensor_schedule() {
+        readUpperNext = false;
+        haveSensorPair = false;
+        nextSensorReadNanos = nanoClock.getAsLong();
     }
 
     public synchronized Units.Length get_upper_distance() {
@@ -165,20 +201,30 @@ public class Intake {
     }
 
     public synchronized boolean loaded() {
-        refresh_sensor_readings();
-        return lowerDistance.is_valid() && upperDistance.is_valid()
+        return loaded_at(refresh_sensor_readings());
+    }
+
+    private boolean loaded_at(long now) {
+        return sensor_readings_valid_at(now)
                 && lowerDistance.get_value() < EMPTY_LOWER_DISTANCE.mm()
                 && upperDistance.get_value() < EMPTY_UPPER_DISTANCE.mm();
     }
 
     public synchronized boolean sensor_readings_valid() {
-        refresh_sensor_readings();
-        return lowerDistance.is_valid() && upperDistance.is_valid();
+        return sensor_readings_valid_at(refresh_sensor_readings());
+    }
+
+    private boolean sensor_readings_valid_at(long now) {
+        return haveSensorPair && lowerDistance.is_valid() && upperDistance.is_valid()
+                && now - lastLowerReadNanos <= MAX_SENSOR_AGE_NANOS
+                && now - lastUpperReadNanos <= MAX_SENSOR_AGE_NANOS
+                && Math.abs(lastLowerReadNanos - lastUpperReadNanos) <= MAX_PAIR_SPACING_NANOS;
     }
 
     public synchronized String get_sensor_telemetry() {
-        return get_lower_distance() + "\t" + get_upper_distance() + "\t" + loaded()
-                + "\tvalid: " + sensor_readings_valid();
+        long now = refresh_sensor_readings();
+        return mm(lowerDistance.get_value()) + "\t" + mm(upperDistance.get_value()) + "\t" + loaded_at(now)
+                + "\tvalid: " + sensor_readings_valid_at(now);
     }
 
     // Combined subsystem operations
@@ -197,7 +243,6 @@ public class Intake {
         transferMode = TransferMode.OFF;
         scoringMode = ScoringMode.COLLECT;
         shotRequested = false;
-        sensorReadingsInitialized = false;
         lowerDistance.reset();
         upperDistance.reset();
         DcMotorEx rawIntakeMotor = hardwareMap.get(DcMotorEx.class, "intakeMotor");
@@ -216,21 +261,21 @@ public class Intake {
 
         colorSensorLow = hardwareMap.get(ColorRangeSensor.class, "colorSensorLow");
         colorSensorHigh = hardwareMap.get(ColorRangeSensor.class, "colorSensorHigh");
-        sensorReadingsInitialized = false;
+        reset_sensor_schedule();
     }
 
     public void request_shot() { shotRequested = true; }
 
     public void stop_feed() {
         // Do not reuse a pre-shot full sample after pollen may have left the robot.
-        if (transferMode == TransferMode.FORWARD) sensorReadingsInitialized = false;
+        if (transferMode == TransferMode.FORWARD) reset_sensor_schedule();
         shotRequested = false;
         OpModeCleanup.run(null, this::off, this::transfer_off);
     }
 
     public void stop() {
         fullLoadHeld = false;
-        sensorReadingsInitialized = false;
+        reset_sensor_schedule();
         scoringMode = ScoringMode.COLLECT;
         shotRequested = false;
         OpModeCleanup.run(null, this::off, this::transfer_off);
