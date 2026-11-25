@@ -467,6 +467,15 @@ public class FtcRobotControllerActivity extends Activity
     super.onDestroy();
     RobotLog.vv(TAG, "onDestroy()");
 
+    if (preferencesHelper != null) {
+      preferencesHelper.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener);
+    }
+    try {
+      stopWifiMute();
+    } catch (RuntimeException failure) {
+      RobotLog.ee(TAG, failure, "Failed to stop Wi-Fi automute");
+    }
+
     shutdownRobot();  // Ensure the robot is put away to bed
     if (callback != null) callback.close();
 
@@ -477,7 +486,6 @@ public class FtcRobotControllerActivity extends Activity
     // If the app manually (?) is stopped, then we don't need the auto-starting function (?)
     ServiceController.stopService(FtcRobotControllerWatchdogService.class);
     if (wifiLock != null) wifiLock.release();
-    if (preferencesHelper != null) preferencesHelper.getSharedPreferences().unregisterOnSharedPreferenceChangeListener(sharedPreferencesListener);
 
     RobotLog.cancelWriteLogcatToDisk();
 
@@ -813,26 +821,48 @@ public class FtcRobotControllerActivity extends Activity
   }
 
   protected void initWifiMute(boolean enable) {
-    if (enable) {
-      wifiMuteStateMachine = new WifiMuteStateMachine();
-      wifiMuteStateMachine.initialize();
-      wifiMuteStateMachine.start();
+    if (!enable) {
+      stopWifiMute();
+      return;
+    }
+    if (isDestroyed() || wifiMuteStateMachine != null) return;
 
+    WifiMuteStateMachine stateMachine = new WifiMuteStateMachine();
+    wifiMuteStateMachine = stateMachine;
+    try {
+      stateMachine.initialize();
       motionDetection = new MotionDetection(2.0, 10);
-      motionDetection.startListening();
-      motionDetection.registerListener(new MotionDetection.MotionDetectionListener() {
-        @Override
-        public void onMotionDetected(double vector)
-        {
-          wifiMuteStateMachine.consumeEvent(WifiMuteEvent.USER_ACTIVITY);
+      motionDetection.registerListener(vector -> {
+        if (wifiMuteStateMachine == stateMachine) {
+          stateMachine.consumeEvent(WifiMuteEvent.USER_ACTIVITY);
         }
       });
-    } else {
-      wifiMuteStateMachine.stop();
-      wifiMuteStateMachine = null;
-      motionDetection.stopListening();
-      motionDetection.purgeListeners();
-      motionDetection = null;
+
+      stateMachine.start();
+      motionDetection.startListening();
+    } catch (RuntimeException | Error failure) {
+      try {
+        stopWifiMute();
+      } catch (RuntimeException | Error cleanupFailure) {
+        if (cleanupFailure != failure) failure.addSuppressed(cleanupFailure);
+      }
+      throw failure;
+    }
+  }
+
+  private void stopWifiMute() {
+    WifiMuteStateMachine stateMachine = wifiMuteStateMachine;
+    MotionDetection detection = motionDetection;
+    wifiMuteStateMachine = null;
+    motionDetection = null;
+
+    try {
+      if (detection != null) {
+        detection.purgeListeners();
+        detection.stopListening();
+      }
+    } finally {
+      if (stateMachine != null) stateMachine.stop();
     }
   }
 
