@@ -257,7 +257,7 @@ public final class PerformanceWorkloadChecks {
         check((long) get(workload, "encoderPositionReads") == 0, "missing motor not recorded as a successful read");
         check((long) get(workload, "lowerAgeNanos") == -1, "missing range age explicitly unavailable");
         String unavailable = (String) invoke(workload, "unavailable", config);
-        check(unavailable.contains("missing leftFront") && unavailable.contains("missing range"), "missing hardware visible in results");
+        check(unavailable.contains("missing left_front") && unavailable.contains("missing range"), "missing hardware visible in results");
         invoke(workload, "restore");
     }
 
@@ -325,7 +325,7 @@ public final class PerformanceWorkloadChecks {
         final ServoState servo = new ServoState();
         final RangeState lower = new RangeState(12), upper = new RangeState(24);
         Fixture() {
-            String[] names = {"leftFront", "leftRear", "rightFront", "rightRear"};
+            String[] names = {"left_front", "left_back", "right_front", "right_back"};
             for (int i = 0; i < motors.length; i++) map.named.put(names[i], proxy(DcMotorEx.class, motors[i]));
             map.named.put("servoHood", proxy(Servo.class, servo));
             map.named.put("colorSensorLow", proxy(ColorRangeSensor.class, lower));

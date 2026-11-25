@@ -29,6 +29,7 @@ $taskCp = $taskClasspath -join ';'
 $taskPackage = Join-Path $taskRepo 'TeamCode\src\main\java\org\firstinspires\ftc\teamcode\limelight'
 $taskSources = @(Get-ChildItem -LiteralPath $taskPackage -Filter '*.java' -File)
 $taskSources += Get-Item -LiteralPath (Join-Path $taskRepo 'TeamCode\src\main\java\org\firstinspires\ftc\teamcode\core\control\CompetitionWorkers.java')
+$taskSources += Get-Item -LiteralPath (Join-Path $taskRepo 'TeamCode\src\main\java\org\firstinspires\ftc\teamcode\core\hardware\RobotDimensions.java')
 $taskTests = @(Get-ChildItem -LiteralPath (Join-Path $taskRepo 'tests\java\org\firstinspires\ftc\teamcode\limelight') -Filter '*.java' -File)
 # Compile production code against real SDK signatures first. Fixtures never establish SDK compatibility.
 & javac -source 8 -target 8 -proc:none -classpath $taskCp -d $taskReal @($taskSources.FullName) @($taskTests.FullName)

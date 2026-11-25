@@ -5,8 +5,8 @@ import com.pedropathing.math.Pose;
 import org.firstinspires.ftc.teamcode.core.hardware.SensorReadings;
 
 /**
- * Ideal, unmirrored RED field geometry for autonomous routes. Change these
- * coordinates only when the route changes. Put field-specific corrections in
+ * Ideal, unmirrored RED field geometry authored for an 18 × 18-inch robot outline.
+ * Change these coordinates only when the route changes. Put field-specific corrections in
  * the corresponding op mode as {@code hotfix(dx, dy, ddeg).plus(idealPose)}.
  * The correction is applied before mirroring for BLUE.
  */

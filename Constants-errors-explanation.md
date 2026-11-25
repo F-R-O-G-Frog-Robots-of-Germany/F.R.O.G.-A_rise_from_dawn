@@ -160,10 +160,10 @@ Pedro 3 uses `MecanumConfig` with a configuration lambda:
 
 ```java
 public static MecanumConfig drivetrainConfig = new MecanumConfig(c -> {
-    c.frontLeftName.set("leftFront");
-    c.backLeftName.set("leftRear");
-    c.frontRightName.set("rightFront");
-    c.backRightName.set("rightRear");
+    c.frontLeftName.set("left_front");
+    c.backLeftName.set("left_back");
+    c.frontRightName.set("right_front");
+    c.backRightName.set("right_back");
 });
 ```
 

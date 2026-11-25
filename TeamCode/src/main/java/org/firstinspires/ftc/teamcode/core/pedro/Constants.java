@@ -14,15 +14,17 @@ import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+
 public final class Constants {
     private Constants() {
     }
 
     // Change these names to match the Robot Controller configuration.
-    private static final String FRONT_LEFT_MOTOR = "leftFront";
-    private static final String BACK_LEFT_MOTOR = "leftRear";
-    private static final String FRONT_RIGHT_MOTOR = "rightFront";
-    private static final String BACK_RIGHT_MOTOR = "rightRear";
+    private static final String FRONT_LEFT_MOTOR = "left_front";
+    private static final String BACK_LEFT_MOTOR = "left_back";
+    private static final String FRONT_RIGHT_MOTOR = "right_front";
+    private static final String BACK_RIGHT_MOTOR = "right_back";
     private static final String PINPOINT_NAME = "pinpoint";
     private static final boolean PREFER_COMPACT_PINPOINT_BULK_READS = true;
 
@@ -41,11 +43,12 @@ public final class Constants {
 
     public static final PinpointConfig localizerConfig = new PinpointConfig(c -> {
         c.name.set(PINPOINT_NAME);
-        c.xPodOffset.set(0.0);
-        c.yPodOffset.set(0.0);
-        c.offsetUnits.set(org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit.INCH);
-        c.globalDistanceUnit.set(org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit.INCH);
-        c.encoderResolutionUnit.set(org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit.INCH);
+        // The forward (X) pod is right of center, and the strafe (Y) pod is ahead of center.
+        c.xPodOffset.set(DistanceUnit.INCH.fromUnit(DistanceUnit.CM, -20.0));
+        c.yPodOffset.set(DistanceUnit.INCH.fromUnit(DistanceUnit.CM, 10.5));
+        c.offsetUnits.set(DistanceUnit.INCH);
+        c.globalDistanceUnit.set(DistanceUnit.INCH);
+        c.encoderResolutionUnit.set(DistanceUnit.INCH);
         c.podType.set(GoBildaPinpointDriver.GoBildaOdometryPods.goBILDA_4_BAR_POD);
         c.xPodDirection.set(GoBildaPinpointDriver.EncoderDirection.FORWARD);
         c.yPodDirection.set(GoBildaPinpointDriver.EncoderDirection.FORWARD);
@@ -95,5 +98,10 @@ public final class Constants {
 
     public static PinpointLocalizer create_tuning_localizer(HardwareMap hardwareMap, PinpointConfig config) {
         return PinpointBulkReads.create(hardwareMap, config, false);
+    }
+
+    public static PinpointLocalizer create_optional_pinpoint_localizer(HardwareMap hardwareMap) {
+        if (hardwareMap.tryGet(GoBildaPinpointDriver.class, localizerConfig.name.get()) == null) return null;
+        return PinpointBulkReads.create(hardwareMap, localizerConfig, PREFER_COMPACT_PINPOINT_BULK_READS);
     }
 }

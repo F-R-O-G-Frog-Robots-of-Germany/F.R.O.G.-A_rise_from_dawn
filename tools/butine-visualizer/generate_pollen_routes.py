@@ -17,7 +17,8 @@ import tempfile
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-JAVA_PACKAGE = PROJECT_ROOT / "TeamCode/src/main/java/org/firstinspires/ftc/teamcode/limelight"
+JAVA_ROOT = PROJECT_ROOT / "TeamCode/src/main/java/org/firstinspires/ftc/teamcode"
+JAVA_PACKAGE = JAVA_ROOT / "limelight"
 BRIDGE_SOURCE = Path(__file__).with_name("ButineVisualizerBridge.java")
 BRIDGE_CLASS = "org.firstinspires.ftc.teamcode.tools.ButineVisualizerBridge"
 POLLEN_PER_SIDE = 20
@@ -66,7 +67,7 @@ def find_pedro_jar(supplied: Path | None) -> Path:
 
 def compile_bridge(javac: str, jar: Path) -> Path:
     sources = [JAVA_PACKAGE / name for name in ("Butine.java", "ButineField.java", "ButineIntake.java", "Pollen.java", "VisionPose.java")]
-    sources.append(BRIDGE_SOURCE)
+    sources.extend((JAVA_ROOT / "core/hardware/RobotDimensions.java", BRIDGE_SOURCE))
     fingerprint = hashlib.sha256()
     fingerprint.update(str(jar).encode("utf-8"))
     fingerprint.update(jar.read_bytes())
@@ -246,23 +247,26 @@ def make_project(plan: dict, eligible: list[dict], seed: int) -> dict:
                        "vertices": [{"x": box["minX"], "y": box["minY"]}, {"x": box["maxX"], "y": box["minY"]},
                                     {"x": box["maxX"], "y": box["maxY"]}, {"x": box["minX"], "y": box["maxY"]}],
                        "color": color, "fillColor": color, "type": "obstacle", "visible": True, "locked": True})
+    config = plan["config"]
     start = plan["start"]
     start_deg = math.degrees(start["heading"])
     return {"version": "1.5.0", "startPoint": {"x": start["x"], "y": start["y"], "headingDeg": start_deg,
             "heading": "constant", "degrees": start_deg, "locked": False},
             "lines": lines, "sequence": sequence, "shapes": shapes, "fieldPoints": [], "activePaths": [],
-            "settings": {"fieldWidth": 144, "fieldHeight": 144, "fieldMap": "biobuzz.webp", "rLength": 18,
-                         "rWidth": 18, "rHeight": 18, "safetyMargin": 1, "pathOpacity": 1,
+            "settings": {"fieldWidth": 144, "fieldHeight": 144, "fieldMap": "biobuzz.webp",
+                         "rLength": config["robotLengthIn"], "rWidth": config["robotWidthIn"],
+                         "rHeight": 18, "safetyMargin": 1, "pathOpacity": 1,
                          "showGhostPaths": False, "showOnionLayers": False,
                          "experimentalFeatures": {"obstacles": True}},
             "butineVisualization": {"seed": seed, "alliance": "RED", "sideCondition": "x < 72",
                                      "generatedPollen": 40, "displayedPollen": 20, "possessionLimit": 4,
                                      "pollenShapesAreDisplayMarkersOnly": True, "routeGradient": "white-green-black",
-                                     "routeCount": len(trips), "virtualBudgetSeconds": plan["config"]["remainingSeconds"],
-                                     "intakeWidthIn": plan["config"]["intakeWidthIn"],
-                                     "intakeForwardOffsetIn": plan["config"]["intakeForwardOffsetIn"],
-                                     "intakeOvershootIn": plan["config"]["intakeOvershootIn"],
-                                     "pollenRadiusIn": plan["config"]["pollenRadiusIn"],
+                                     "routeCount": len(trips), "virtualBudgetSeconds": config["remainingSeconds"],
+                                     "robotCenterForwardIn": config["robotCenterForwardIn"],
+                                     "intakeWidthIn": config["intakeWidthIn"],
+                                     "intakeForwardOffsetIn": config["intakeForwardOffsetIn"],
+                                     "intakeOvershootIn": config["intakeOvershootIn"],
+                                     "pollenRadiusIn": config["pollenRadiusIn"],
                                      "collectionModel": "front intake sweep at constant robot heading",
                                      "continuousCollection": True}}
 
@@ -323,10 +327,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "build/butine-visualizer/red-pollen.pp")
     parser.add_argument("--seconds", type=float, default=150, help="Virtual planning budget; default full-match 150 seconds, use 30 for autonomous.")
     parser.add_argument("--score-seconds", type=float, default=2, help="Scoring time deducted after every depot return.")
-    parser.add_argument("--intake-width", type=float, default=18,
-                        help="Active front intake width in inches (default 18).")
-    parser.add_argument("--intake-forward-offset", type=float, default=9,
-                        help="Distance from robot center to front intake in inches (default 9).")
+    parser.add_argument("--intake-width", type=float,
+                        help="Active front intake width in inches (default: production Java setting).")
+    parser.add_argument("--intake-forward-offset", type=float,
+                        help="Distance from chassis center to front intake in inches (default: production Java setting).")
     parser.add_argument("--intake-overshoot", type=float,
                         help="Continue collection this many inches beyond the last intake contact (default: production Java setting, 1 inch).")
     parser.add_argument("--depot", nargs=3, type=float, default=(59.25, 18, 90), metavar=("X", "Y", "DEGREES"))
@@ -341,9 +345,9 @@ def main(argv: list[str] | None = None) -> int:
             raise ValueError("--seed must be between 0 and 2147483647")
         if not math.isfinite(args.seconds) or args.seconds < 0 or not math.isfinite(args.score_seconds) or args.score_seconds < 0:
             raise ValueError("Time budgets must be finite and nonnegative")
-        if not math.isfinite(args.intake_width) or args.intake_width <= 0:
+        if args.intake_width is not None and (not math.isfinite(args.intake_width) or args.intake_width <= 0):
             raise ValueError("--intake-width must be finite and positive")
-        if not math.isfinite(args.intake_forward_offset) or args.intake_forward_offset < 0:
+        if args.intake_forward_offset is not None and (not math.isfinite(args.intake_forward_offset) or args.intake_forward_offset < 0):
             raise ValueError("--intake-forward-offset must be finite and nonnegative")
         if args.intake_overshoot is not None and (not math.isfinite(args.intake_overshoot) or args.intake_overshoot < 0):
             raise ValueError("--intake-overshoot must be finite and nonnegative")
@@ -360,7 +364,11 @@ def main(argv: list[str] | None = None) -> int:
             profile = json.loads(args.partner_profile.read_text(encoding="utf-8-sig"))
             boxes = partner_corridor(profile, geometry["config"]["fieldSizeIn"],
                                      geometry["config"]["maxBoxes"] - len(geometry["obstacles"]))
-        intake_overshoot = geometry["config"]["intakeOvershootIn"] if args.intake_overshoot is None else args.intake_overshoot
+        defaults = geometry["config"]
+        intake_width = defaults["intakeWidthIn"] if args.intake_width is None else args.intake_width
+        intake_forward_offset = (defaults["intakeForwardOffsetIn"] if args.intake_forward_offset is None
+                                 else args.intake_forward_offset)
+        intake_overshoot = defaults["intakeOvershootIn"] if args.intake_overshoot is None else args.intake_overshoot
         points = generate_map(seed, geometry)
         eligible = [point for point in points if point["x"] < 72]
         output = args.output.expanduser().resolve()
@@ -370,8 +378,7 @@ def main(argv: list[str] | None = None) -> int:
         with tempfile.TemporaryDirectory(prefix="butine-map-") as temporary:
             source = Path(temporary) / "map.tsv"
             values = (*start[:2], math.radians(start[2]), *depot[:2], math.radians(depot[2]),
-                      args.seconds, args.score_seconds, seed, args.intake_width, args.intake_forward_offset)
-            values += (intake_overshoot,)
+                      args.seconds, args.score_seconds, seed, intake_width, intake_forward_offset, intake_overshoot)
             rows = ["CONFIG\t" + "\t".join(map(str, values))]
             rows.extend(f"POLLEN\t{point['id']}\t{point['x']}\t{point['y']}" for point in eligible)
             rows.extend("PARTNER\t" + "\t".join(map(str, box)) for box in boxes)
@@ -389,7 +396,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Java planned {plan['diagnostics']['totalCollected']}/20 RED pollen in {len(plan['runs'])} trips; maximum load 4.")
         if boxes:
             print(f"Reserved the partner corridor for the whole test ({len(boxes)} boxes).")
-        print(f"Front intake: {args.intake_width:g} inches wide, {args.intake_forward_offset:g} inches ahead of robot center; {intake_overshoot:g}-inch collection overshoot.")
+        print(f"Front intake: {intake_width:g} inches wide, {intake_forward_offset:g} inches ahead of chassis center; "
+              f"{intake_overshoot:g}-inch collection overshoot.")
         print(f"Estimated travel/scoring: {plan['diagnostics']['totalCommittedTimeS']:.2f}/{args.seconds:g} seconds.")
         print(f"Pedro project: {output}\nMap: {map_path}\nJava trace: {plan_path}")
         return 0

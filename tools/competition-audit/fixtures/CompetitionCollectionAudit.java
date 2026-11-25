@@ -43,6 +43,7 @@ public final class CompetitionCollectionAudit {
     private static final Pose START = new Pose(20, 20, 0);
     private static final VisionPose DEPOT = new VisionPose(18, 20, 0);
     private static final Pose NEXT = new Pose(16, 50, Math.PI / 2);
+    private static final Pose RED_PARK = new Pose(11 + 42.2 / (2 * 2.54) - 1, 108, 0);
     private static int checks;
 
     public static void main(String[] args) throws Exception {
@@ -98,7 +99,7 @@ public final class CompetitionCollectionAudit {
                 "empty map dispatches no collection, dependent path or shot");
         require(session.parkPaths == 1 && session.parkAt < 5,
                 "empty map hands off immediately to one checked live-position park");
-        require(session.finalPose != null && session.finalPose.distance(new Pose(19, 108, 0)) < 1e-6,
+        require(session.finalPose != null && session.finalPose.distance(RED_PARK) < 1e-6,
                 "real optional autonomous queue reaches the calculated loading-zone target");
         require(!session.intaking && !session.flowerDown && !session.shooting,
                 "empty-map park preserves safe mechanism outputs");
@@ -448,7 +449,7 @@ public final class CompetitionCollectionAudit {
                                 && session.workers.collection_result().outcome == ButineRunner.Outcome.NO_TARGETS,
                         "fallback park follows this attempt's empty-map result");
                 require(path.get(0).distance(pose()) < 1e-6
-                                && path.endPose().distance(new Pose(19, 108, 0)) < 1e-6,
+                                && path.endPose().distance(RED_PARK) < 1e-6,
                         "fallback park is routed from the actual live position to the terminal target");
                 require(!session.intaking && !session.flowerDown && !session.shooting,
                         "empty-map fallback disables collection and shooting before parking");

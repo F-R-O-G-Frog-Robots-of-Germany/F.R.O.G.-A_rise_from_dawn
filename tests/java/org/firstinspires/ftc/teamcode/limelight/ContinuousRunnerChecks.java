@@ -50,6 +50,8 @@ public final class ContinuousRunnerChecks {
     private static Butine.Params parameters() {
         Butine.Params p = new Butine.Params();
         p.field = new ButineField(144, 18, 18, 1);
+        p.intakeWidthIn = 18;
+        p.intakeForwardOffsetIn = 9;
         p.lookaheadRuns = 1; p.remainingS = 100; p.scoreOverheadS = 0;
         return p;
     }

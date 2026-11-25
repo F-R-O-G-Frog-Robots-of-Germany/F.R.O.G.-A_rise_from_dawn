@@ -42,6 +42,8 @@ public final class RunnerOutcomeChecks {
     private static Butine.Params physical_params() {
         Butine.Params p = point_params();
         p.field = new ButineField(144, 18, 18, 1);
+        p.intakeWidthIn = 18;
+        p.intakeForwardOffsetIn = 9;
         return p;
     }
 

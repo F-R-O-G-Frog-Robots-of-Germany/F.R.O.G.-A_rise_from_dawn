@@ -81,6 +81,8 @@ class ExportChecks(unittest.TestCase):
             self.assertTrue(reserved)
             self.assertTrue(any(shape["name"].startswith("Partner corridor") for shape in project["shapes"]))
             self.assertEqual(world, baseline_world, "Reserve space without moving any generated game pieces")
+            for setting in ("robotCenterForwardIn", "radiusIn"):
+                self.assertEqual(plan["config"][setting], baseline["config"][setting])
             self.assertGreater(plan["diagnostics"]["totalCollected"], 0)
             self.assertLess(plan["diagnostics"]["totalCollected"], baseline["diagnostics"]["totalCollected"])
             self.assertTrue(plan["diagnostics"]["allSegmentsClear"])
@@ -110,8 +112,15 @@ class ExportChecks(unittest.TestCase):
             self.assertGreater(plan["diagnostics"]["totalCollected"], 0)
             self.assertTrue(all(1 <= run["pickupCount"] <= 4 for run in plan["runs"]))
             self.assertEqual(plan["diagnostics"]["totalCollected"] + len(plan["uncollectedIds"]), 20)
-            self.assertEqual(plan["config"]["intakeWidthIn"], 18)
-            self.assertEqual(plan["config"]["intakeForwardOffsetIn"], 9)
+            self.assertAlmostEqual(plan["config"]["robotWidthIn"], 45.3 / 2.54)
+            self.assertAlmostEqual(plan["config"]["robotLengthIn"], 18)
+            self.assertAlmostEqual(plan["config"]["robotCenterForwardIn"], (18 - 42.2 / 2.54) / 2)
+            self.assertAlmostEqual(plan["config"]["intakeWidthIn"], 45.3 / 2.54)
+            self.assertAlmostEqual(plan["config"]["intakeForwardOffsetIn"], 18 - 42.2 / 2.54 / 2)
+            self.assertEqual(project["settings"]["rWidth"], plan["config"]["robotWidthIn"])
+            self.assertEqual(project["settings"]["rLength"], plan["config"]["robotLengthIn"])
+            self.assertEqual(project["butineVisualization"]["robotCenterForwardIn"],
+                             plan["config"]["robotCenterForwardIn"])
             self.assertEqual(plan["config"]["intakeOvershootIn"], self.geometry["config"]["intakeOvershootIn"])
             self.assertEqual(len(plan["obstacles"]), 6, "Pollen markers must never enter the Java collision map")
             markers = [shape for shape in project["shapes"] if shape["id"].startswith("pollen-")]
@@ -177,14 +186,15 @@ class ExportChecks(unittest.TestCase):
                 leg["target"]["x"] - leg["from"]["x"], leg["target"]["y"] - leg["from"]["y"]), overshoot)
             self.assertEqual(leg["target"]["heading"], base_leg["target"]["heading"])
 
-    def test_legacy_tsv_uses_production_overshoot_default(self):
+    def test_legacy_tsv_uses_production_intake_defaults(self):
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "legacy.tsv"
             config = (30, 18, math.pi / 2, 30, 18, math.pi / 2, 150, 2, 1)
             source.write_text("CONFIG\t" + "\t".join(map(str, config)) + "\nPOLLEN\t1\t30\t36\n",
                               encoding="utf-8")
             plan = exporter.invoke_bridge(self.java, self.classes, self.jar, str(source))
-            self.assertEqual(plan["config"]["intakeOvershootIn"], self.geometry["config"]["intakeOvershootIn"])
+            for setting in ("intakeWidthIn", "intakeForwardOffsetIn", "intakeOvershootIn"):
+                self.assertEqual(plan["config"][setting], self.geometry["config"][setting])
             self.assertEqual(plan["diagnostics"]["totalCollected"], 1)
 
     def test_incidental_contacts_obey_capacity_and_return_intake_is_off(self):

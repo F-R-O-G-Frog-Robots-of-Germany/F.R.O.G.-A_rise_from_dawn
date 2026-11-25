@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.limelight;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Objects;
+import org.firstinspires.ftc.teamcode.core.hardware.RobotDimensions;
 
 /** Immutable physical boxes and bounded, deterministic robot-center routing in field inches. */
 public final class ButineField {
@@ -46,8 +47,9 @@ public final class ButineField {
         public VisionPose point(int index) { return points[index]; }
     }
 
-    public final double fieldSizeIn, robotLengthIn, robotWidthIn, bodyClearanceIn;
+    public final double fieldSizeIn, robotLengthIn, robotWidthIn, robotCenterForwardIn, bodyClearanceIn;
     public final double fieldReserveIn, trackingReserveIn, radiusIn;
+    final double bodyRadiusIn;
     private final boolean unrestricted;
     private final Box[] physicalBoxes;
     private final Box[] exclusionBoxes;
@@ -56,8 +58,8 @@ public final class ButineField {
 
     private ButineField() {
         unrestricted = true;
-        fieldSizeIn = robotLengthIn = robotWidthIn = bodyClearanceIn = 0;
-        fieldReserveIn = trackingReserveIn = radiusIn = 0;
+        fieldSizeIn = robotLengthIn = robotWidthIn = robotCenterForwardIn = bodyClearanceIn = 0;
+        fieldReserveIn = trackingReserveIn = radiusIn = bodyRadiusIn = 0;
         physicalBoxes = exclusionBoxes = new Box[0];
         corners = new VisionPose[0];
         cornerDistances = new double[0][0];
@@ -72,24 +74,34 @@ public final class ButineField {
     public ButineField(double fieldSizeIn, double robotLengthIn, double robotWidthIn,
                        double bodyClearanceIn, double fieldReserveIn, double trackingReserveIn,
                        Box... physicalBoxes) {
+        this(fieldSizeIn, robotLengthIn, robotWidthIn, 0, bodyClearanceIn,
+                fieldReserveIn, trackingReserveIn, physicalBoxes);
+    }
+
+    /** robotCenterForwardIn locates the rectangle center along the robot's forward axis. */
+    public ButineField(double fieldSizeIn, double robotLengthIn, double robotWidthIn,
+                       double robotCenterForwardIn, double bodyClearanceIn, double fieldReserveIn,
+                       double trackingReserveIn, Box... physicalBoxes) {
         if (!Double.isFinite(fieldSizeIn) || fieldSizeIn <= 0
                 || !Double.isFinite(robotLengthIn) || robotLengthIn <= 0
                 || !Double.isFinite(robotWidthIn) || robotWidthIn <= 0
+                || !Double.isFinite(robotCenterForwardIn) || Math.abs(robotCenterForwardIn) > robotLengthIn / 2
                 || !Double.isFinite(bodyClearanceIn) || bodyClearanceIn < 0
                 || !Double.isFinite(fieldReserveIn) || fieldReserveIn < 0
                 || !Double.isFinite(trackingReserveIn) || trackingReserveIn < 0) {
-            throw new IllegalArgumentException("Finite positive field/robot dimensions and nonnegative clearance required");
+            throw new IllegalArgumentException("Invalid field dimensions, robot footprint or clearance");
         }
         Objects.requireNonNull(physicalBoxes, "physicalBoxes");
         if (physicalBoxes.length > MAX_BOXES) throw new IllegalArgumentException("Too many obstacle boxes");
-        double radius = Math.hypot(robotLengthIn / 2, robotWidthIn / 2)
-                + bodyClearanceIn + fieldReserveIn + trackingReserveIn;
+        bodyRadiusIn = Math.hypot(robotLengthIn / 2 + Math.abs(robotCenterForwardIn), robotWidthIn / 2);
+        double radius = bodyRadiusIn + bodyClearanceIn + fieldReserveIn + trackingReserveIn;
         if (!Double.isFinite(radius) || radius >= fieldSizeIn / 2) {
             throw new IllegalArgumentException("Robot envelope leaves no usable field domain");
         }
         this.fieldSizeIn = fieldSizeIn;
         this.robotLengthIn = robotLengthIn;
         this.robotWidthIn = robotWidthIn;
+        this.robotCenterForwardIn = robotCenterForwardIn;
         this.bodyClearanceIn = bodyClearanceIn;
         this.fieldReserveIn = fieldReserveIn;
         this.trackingReserveIn = trackingReserveIn;
@@ -127,7 +139,8 @@ public final class ButineField {
         // maximum-height robot plus one inch overhead allowance. The underpass remains open.
         // Allowed +/-30-degree HIVE motion has conservative underside Z>=22.401 inches.
         // See docs/Butine-Center-Underpass-Geometry-2026-10-18.json for CAD derivation and sources.
-        static final ButineField BIOBUZZ = new ButineField(144, 18, 18, 1,
+        static final ButineField BIOBUZZ = new ButineField(144, RobotDimensions.LENGTH_WITH_INTAKE_IN,
+                RobotDimensions.DRIVETRAIN_WIDTH_IN, RobotDimensions.BODY_CENTER_FORWARD_IN, 1, 0, 0,
                 new Box(47.2, 53.9, 52.5, 91.5), new Box(90.1, 96.8, 52.5, 91.5),
                 new Box(45.2, 52.0, 136.4, 143.8), new Box(136.4, 143.8, 92.0, 98.8),
                 new Box(92.0, 98.8, 0.2, 7.6), new Box(0.2, 7.6, 45.2, 52.0));
@@ -136,7 +149,7 @@ public final class ButineField {
     /** Explicit free-plane model for mathematical calibration and legacy desktop fixtures. */
     public static ButineField unrestricted() { return Defaults.UNRESTRICTED; }
 
-    /** Nominal BIOBUZZ footprint for an 18 by 18-inch robot no taller than 18 inches. */
+    /** BIOBUZZ field with the robot's measured footprint and an 18-inch height allowance. */
     public static ButineField biobuzz() { return Defaults.BIOBUZZ; }
 
     /** Taller envelopes retain a conservative whole-center obstacle until a new height slice is derived. */

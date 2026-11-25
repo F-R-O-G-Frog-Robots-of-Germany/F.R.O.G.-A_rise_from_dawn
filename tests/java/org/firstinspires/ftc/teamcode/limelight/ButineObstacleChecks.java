@@ -78,7 +78,16 @@ public final class ButineObstacleChecks {
 
     private static void footprint_and_official_underpass() {
         ButineField field = ButineField.biobuzz();
-        near(Math.sqrt(162) + 1, field.radiusIn, "robot half diagonal plus one-inch clearance");
+        double halfChassisLength = 42.2 / (2 * 2.54);
+        double halfWidth = 45.3 / (2 * 2.54);
+        near(18, field.robotLengthIn, "total length includes front intake");
+        near(2 * halfWidth, field.robotWidthIn, "measured chassis width");
+        near(9 - halfChassisLength, field.robotCenterForwardIn, "body extends forward of chassis center");
+        near(Math.hypot(18 - halfChassisLength, halfWidth) + 1, field.radiusIn,
+                "front corner radius plus one-inch clearance");
+        Butine.Params defaults = new Butine.Params();
+        near(2 * halfWidth, defaults.intakeWidthIn, "default mouth spans the drivetrain");
+        near(18 - halfChassisLength, defaults.intakeForwardOffsetIn, "default mouth is at the front edge");
         require(field.is_clear(pose(72, 72)), "middle of the field is open below the Hives");
         require(field.segment_clear(pose(72, 20), pose(72, 124)),
                 "an 18-inch-high robot can drive straight between the low frame supports");
@@ -89,7 +98,8 @@ public final class ButineObstacleChecks {
         require(!field.is_clear(pose(9, 20)), "center nine inches from wall has no rotating-corner clearance");
         ButineField bigger = new ButineField(144, 20, 18, 1);
         near(Math.hypot(10, 9) + 1, bigger.radiusIn, "dimensions drive the envelope");
-        ButineField reserved = new ButineField(100, 18, 18, 1, 1, .5,
+        ButineField reserved = new ButineField(100, field.robotLengthIn, field.robotWidthIn,
+                field.robotCenterForwardIn, 1, 1, .5,
                 new ButineField.Box(45, 55, 30, 70));
         near(field.radiusIn + 1.5, reserved.radiusIn, "field and tracking reserves remain explicit");
         require(!reserved.is_clear(pose(field.radiusIn + .5, 20)), "reserves also increase wall inset");

@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import org.firstinspires.ftc.teamcode.core.hardware.RobotDimensions;
 
 /**
  * Bounded, receding-horizon pollen planner ported from Ma Douce's butine.cpp.
@@ -73,8 +74,9 @@ public final class Butine {
         /** Immutable actual-field geometry; use unrestricted() explicitly for free-plane calibration. */
         public ButineField field = ButineField.biobuzz();
         public boolean sweepIntake = true;
-        public double intakeWidthIn = 18.0;
-        public double intakeForwardOffsetIn = 9.0;
+        // Default sweep assumes the mouth spans the drivetrain width.
+        public double intakeWidthIn = RobotDimensions.DRIVETRAIN_WIDTH_IN;
+        public double intakeForwardOffsetIn = RobotDimensions.FRONT_EXTENT_IN;
         public double intakeOvershootIn = 1.0;
         public double pollenRadiusIn = 1.4;
 
@@ -499,7 +501,7 @@ public final class Butine {
             throw new IllegalArgumentException("Positive intake width/pollen radius and nonnegative front offset/overshoot required");
         if (p.sweepIntake && !p.field.is_unrestricted()
                 && Math.hypot(p.intakeForwardOffsetIn, p.intakeWidthIn / 2)
-                > Math.hypot(p.field.robotLengthIn / 2, p.field.robotWidthIn / 2) + EPSILON)
+                > p.field.bodyRadiusIn + EPSILON)
             throw new IllegalArgumentException("Intake mouth extends beyond the configured robot clearance envelope");
     }
 

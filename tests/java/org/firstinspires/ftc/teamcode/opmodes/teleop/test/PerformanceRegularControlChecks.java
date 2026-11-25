@@ -222,7 +222,7 @@ public final class PerformanceRegularControlChecks {
         final BenchmarkDrivetrain drivetrain;
         Rig(Alliance alliance) throws Exception {
             FakeMap map = new FakeMap();
-            for (String name : new String[]{"leftFront", "rightFront", "leftRear", "rightRear"})
+            for (String name : new String[]{"left_front", "right_front", "left_back", "right_back"})
                 map.values.put(name, new Motor().proxy());
             drivetrain = new BenchmarkDrivetrain(map);
             intake = (BenchmarkIntake) get(robot, "intake");

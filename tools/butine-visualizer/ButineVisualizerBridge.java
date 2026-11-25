@@ -42,11 +42,17 @@ public final class ButineVisualizerBridge {
     private static final class Input {
         VisionPose start, depot;
         double remainingS, scoreOverheadS;
-        double intakeWidthIn = 18, intakeForwardOffsetIn = 9;
-        double intakeOvershootIn = new Butine.Params().intakeOvershootIn;
+        double intakeWidthIn, intakeForwardOffsetIn, intakeOvershootIn;
         int seed;
         final List<Pollen> pollen = new ArrayList<>();
         final List<ButineField.Box> partnerBoxes = new ArrayList<>();
+
+        Input() {
+            Butine.Params defaults = new Butine.Params();
+            intakeWidthIn = defaults.intakeWidthIn;
+            intakeForwardOffsetIn = defaults.intakeForwardOffsetIn;
+            intakeOvershootIn = defaults.intakeOvershootIn;
+        }
     }
 
     private static final class ExecutedRun {
@@ -154,7 +160,8 @@ public final class ButineVisualizerBridge {
             for (int i = 0; i < input.partnerBoxes.size(); i++) boxes[base.box_count() + i] = input.partnerBoxes.get(i);
             // Partner bounds already include their body. ButineField adds our robot envelope.
             field = new ButineField(base.fieldSizeIn, base.robotLengthIn, base.robotWidthIn,
-                    base.bodyClearanceIn, base.fieldReserveIn, base.trackingReserveIn, boxes);
+                    base.robotCenterForwardIn, base.bodyClearanceIn, base.fieldReserveIn,
+                    base.trackingReserveIn, boxes);
         }
         if (!field.is_clear(input.start) || !field.is_clear(input.depot))
             throw new IllegalArgumentException(base.is_clear(input.start) && base.is_clear(input.depot)
@@ -342,6 +349,7 @@ public final class ButineVisualizerBridge {
         property(json, "fieldSizeIn", field.fieldSizeIn);
         property(json, "robotLengthIn", field.robotLengthIn);
         property(json, "robotWidthIn", field.robotWidthIn);
+        property(json, "robotCenterForwardIn", field.robotCenterForwardIn);
         property(json, "bodyClearanceIn", field.bodyClearanceIn);
         property(json, "fieldReserveIn", field.fieldReserveIn);
         property(json, "trackingReserveIn", field.trackingReserveIn);
@@ -454,10 +462,13 @@ public final class ButineVisualizerBridge {
         property(json, "fieldSizeIn", field.fieldSizeIn);
         property(json, "robotLengthIn", field.robotLengthIn);
         property(json, "robotWidthIn", field.robotWidthIn);
+        property(json, "robotCenterForwardIn", field.robotCenterForwardIn);
         property(json, "bodyClearanceIn", field.bodyClearanceIn);
         property(json, "fieldReserveIn", field.fieldReserveIn);
         property(json, "trackingReserveIn", field.trackingReserveIn);
         property(json, "radiusIn", field.radiusIn);
+        property(json, "intakeWidthIn", defaults.intakeWidthIn);
+        property(json, "intakeForwardOffsetIn", defaults.intakeForwardOffsetIn);
         property(json, "intakeOvershootIn", defaults.intakeOvershootIn);
         json.append("},\"obstacles\":[");
         for (int i = 0; i < field.box_count(); i++) {

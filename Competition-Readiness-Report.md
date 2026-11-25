@@ -462,7 +462,7 @@ Use this space to specify implementation choices before changing powered behavio
 
 | Area / location | Deferred values or calibration | Validation when hardware is available |
 | --- | --- | --- |
-| `core/pedro/Constants.java`: drivetrain | Motor names `leftFront`, `leftRear`, `rightFront`, `rightRear`; directions; braking behavior | Match device configuration and physical wheel directions; verify individual and combined motion. |
+| `core/pedro/Constants.java`: drivetrain | Motor names `left_front`, `left_back`, `right_front`, `right_back`; directions; braking behavior | Match device configuration and physical wheel directions; verify individual and combined motion. |
 | `Constants.java`: Pinpoint | Device name `pinpoint`; pod type; x/y pod directions; zero pod offsets; distance/resolution units and scale | Measure offsets, select actual pods, verify units and axes, calibrate and compare measured distance/heading. |
 | `Constants.java`: Foresight | Forward/lateral/heading controller gains; feedforward; linear/quadratic braking coefficients; braking power; achievable speeds; natural deceleration; acceleration/velocity/deceleration constraints; braking/coasting policy | Run guarded commissioning procedures on the finished drive and then validate path following under representative load/battery. |
 | `Constants.java`: path endpoint conditions | Parametric, velocity, translation, heading, and endpoint correction timeout values | Measure acceptable arrival behavior. Keep independent action watchdogs separate from endpoint tuning. |

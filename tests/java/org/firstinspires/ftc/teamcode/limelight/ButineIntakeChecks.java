@@ -22,6 +22,8 @@ public final class ButineIntakeChecks {
     private static Butine.Params settings() {
         Butine.Params p = new Butine.Params();
         p.field = new ButineField(144, 18, 18, 1);
+        p.intakeWidthIn = 18;
+        p.intakeForwardOffsetIn = 9;
         p.remainingS = 100;
         p.scoreOverheadS = 0;
         p.lookaheadRuns = 1;

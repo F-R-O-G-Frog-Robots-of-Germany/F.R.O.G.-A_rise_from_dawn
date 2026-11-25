@@ -167,7 +167,7 @@ public final class PerformanceRegularDriveChecks {
 
     private static void failed_initialization() {
         Fixture missing = new Fixture();
-        missing.map.named.remove("rightRear");
+        missing.map.named.remove("right_back");
         boolean missingRejected = false;
         try { new BenchmarkDrivetrain(missing.map); }
         catch (IllegalArgumentException expected) { missingRejected = true; }
@@ -203,7 +203,7 @@ public final class PerformanceRegularDriveChecks {
         final FakeMap map = new FakeMap();
         final MotorState[] motors = new MotorState[4];
         Fixture() {
-            String[] names = {"leftFront", "rightFront", "leftRear", "rightRear"};
+            String[] names = {"left_front", "right_front", "left_back", "right_back"};
             for (int i = 0; i < names.length; i++) {
                 motors[i] = new MotorState(i);
                 map.named.put(names[i], Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(),

@@ -248,6 +248,7 @@ public class Intake {
         DcMotorEx rawIntakeMotor = hardwareMap.get(DcMotorEx.class, "intakeMotor");
         intakeMotor = new CachedMotor(rawIntakeMotor, 0.01);
         intakeMotor.set_power(0);
+        rawIntakeMotor.setDirection(DcMotorSimple.Direction.REVERSE);
         rawIntakeMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         intakeMotor.invalidate();
 

@@ -56,21 +56,22 @@ public final class ButineParking {
     }
 
     /**
-     * Axis-aligned outside target using the configured body length and requested overlap.
+     * Axis-aligned outside target using the configured rear extent and requested overlap.
      * Returns null if this default is blocked or the conservative wall envelope cannot park.
      * A caller may supply a different validated pose for alliance-partner coordination.
      */
     public static VisionPose default_target(Zone zone, ButineField field, double overlapIn) {
         if (!usable(zone, field, overlapIn)) return null;
-        double x = zone.leftWall ? zone.maxX + field.robotLengthIn / 2.0 - overlapIn
-                : zone.minX - field.robotLengthIn / 2.0 + overlapIn;
+        double rearExtent = field.robotLengthIn / 2.0 - field.robotCenterForwardIn;
+        double x = zone.leftWall ? zone.maxX + rearExtent - overlapIn
+                : zone.minX - rearExtent + overlapIn;
         double y = zone.minY / 2.0 + zone.maxY / 2.0;
         VisionPose target = new VisionPose(x, y, zone.leftWall ? 0 : Math.PI);
         return is_parked(target, zone, field, overlapIn) ? target : null;
     }
 
     /**
-     * Positive overlap of the centered, oriented physical body with the loading-zone volume.
+     * Positive overlap of the oriented physical body with the loading-zone volume.
      * All separating axes must overlap by the requested reserve, in inches. With zero reserve,
      * exact tangency is rejected. Collision/wall clearance remains independently mandatory.
      * This assumes the configured rectangle is occupied body, not a concave bounding box.
@@ -79,10 +80,16 @@ public final class ButineParking {
         if (!usable(zone, field, overlapIn) || pose == null || !pose.is_finite()
                 || !field.is_clear(pose)) return false;
         double c = Math.cos(pose.heading), s = Math.sin(pose.heading);
-        return axis_overlaps(pose, zone, field, overlapIn, 1, 0, c, s)
-                && axis_overlaps(pose, zone, field, overlapIn, 0, 1, c, s)
-                && axis_overlaps(pose, zone, field, overlapIn, c, s, c, s)
-                && axis_overlaps(pose, zone, field, overlapIn, -s, c, c, s);
+        VisionPose center = body_center(pose, field, c, s);
+        return axis_overlaps(center, zone, field, overlapIn, 1, 0, c, s)
+                && axis_overlaps(center, zone, field, overlapIn, 0, 1, c, s)
+                && axis_overlaps(center, zone, field, overlapIn, c, s, c, s)
+                && axis_overlaps(center, zone, field, overlapIn, -s, c, c, s);
+    }
+
+    private static VisionPose body_center(VisionPose reference, ButineField field, double c, double s) {
+        return new VisionPose(reference.x + field.robotCenterForwardIn * c,
+                reference.y + field.robotCenterForwardIn * s, reference.heading);
     }
 
     private static boolean usable(Zone zone, ButineField field, double overlapIn) {
@@ -200,19 +207,21 @@ public final class ButineParking {
         // A normal start never receives a recovery waiver from the usual all-heading router.
         if (field.is_clear(from)) return field.segment_clear(from, to);
         double c = Math.cos(from.heading), s = Math.sin(from.heading);
+        VisionPose fromCenter = body_center(from, field, c, s);
+        VisionPose toCenter = body_center(to, field, c, s);
         double halfX = field.robotLengthIn / 2 * Math.abs(c) + field.robotWidthIn / 2 * Math.abs(s);
         double halfY = field.robotLengthIn / 2 * Math.abs(s) + field.robotWidthIn / 2 * Math.abs(c);
         double margin = field.bodyClearanceIn + field.fieldReserveIn + field.trackingReserveIn;
         // With constant heading every wall deficit is affine, so endpoints bound the whole move.
-        if (!deficit_not_worse(halfX + margin - from.x, halfX + margin - to.x)
-                || !deficit_not_worse(from.x + halfX + margin - field.fieldSizeIn,
-                        to.x + halfX + margin - field.fieldSizeIn)
-                || !deficit_not_worse(halfY + margin - from.y, halfY + margin - to.y)
-                || !deficit_not_worse(from.y + halfY + margin - field.fieldSizeIn,
-                        to.y + halfY + margin - field.fieldSizeIn)) return false;
+        if (!deficit_not_worse(halfX + margin - fromCenter.x, halfX + margin - toCenter.x)
+                || !deficit_not_worse(fromCenter.x + halfX + margin - field.fieldSizeIn,
+                        toCenter.x + halfX + margin - field.fieldSizeIn)
+                || !deficit_not_worse(halfY + margin - fromCenter.y, halfY + margin - toCenter.y)
+                || !deficit_not_worse(fromCenter.y + halfY + margin - field.fieldSizeIn,
+                        toCenter.y + halfY + margin - field.fieldSizeIn)) return false;
         for (int i = 0; i < field.box_count(); i++) {
             ButineField.Box box = field.physical_box(i);
-            if (!obstacle_recovery_clear(from, to, field, box, margin, c, s)) return false;
+            if (!obstacle_recovery_clear(fromCenter, toCenter, field, box, margin, c, s)) return false;
         }
         return true;
     }

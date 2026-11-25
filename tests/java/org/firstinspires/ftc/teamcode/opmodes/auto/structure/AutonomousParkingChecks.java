@@ -31,6 +31,9 @@ import org.firstinspires.ftc.teamcode.subsystems.Shooter;
 
 /** Real autonomous queue and Pedro/Foresight; only clock, mechanisms and physical motion are simulated. */
 public final class AutonomousParkingChecks {
+    private static final double RED_PARK_X = 11 + 42.2 / (2 * 2.54) - 1;
+    private static final Pose RED_PARK = new Pose(RED_PARK_X, 108, 0);
+    private static final Pose BLUE_PARK = new Pose(144 - RED_PARK_X, 36, Math.PI);
     private static int checks;
 
     public static void main(String[] args) throws Exception {
@@ -60,7 +63,7 @@ public final class AutonomousParkingChecks {
                 "one SDK runtime reset is the source of all parking deadline reads");
         require(session.prepares == 0 && session.shots == 0,
                 "actions queued after the terminal park never run");
-        at_target(session, new Pose(19, 108, 0));
+        at_target(session, RED_PARK);
         safe_cleanup(session);
     }
 
@@ -81,20 +84,20 @@ public final class AutonomousParkingChecks {
                 "parking preempts the active action using the SDK remaining time");
         require(session.prepares == 0 && session.shots == 0,
                 "the queued shot is skipped after active-path parking preemption");
-        at_target(session, new Pose(19, 108, 0));
+        at_target(session, RED_PARK);
         safe_cleanup(session);
     }
 
     private static void blue_and_manual_targets_are_actual_field_poses() throws Exception {
         Session blue = run(Scenario.BLUE);
         require(blue.parkPaths == 1, "Blue inheritance selects one parking route");
-        at_target(blue, new Pose(125, 36, Math.PI));
+        at_target(blue, BLUE_PARK);
         require(blue.parkEnd.x() > 120 && blue.parkEnd.y() < 48,
                 "Blue uses F2, not the Red zone or a simulator corner");
         safe_cleanup(blue);
         Session manual = run(Scenario.MANUAL);
         at_target(manual, manual.manualTarget);
-        require(manual.parkEnd.distance(new Pose(125, 36, Math.PI)) > 5,
+        require(manual.parkEnd.distance(BLUE_PARK) > 5,
                 "manual partner-coordination override replaces the calculated default");
         require(manual.parkEnd.x() > 120, "manual actual-field override is not mirrored a second time");
         safe_cleanup(manual);
@@ -162,8 +165,7 @@ public final class AutonomousParkingChecks {
                     "exit and parking reserve are scheduled together near autonomous end: " + scenario);
             require(session.prepares == 0 && session.shots == 0,
                     "parking preserves a carry load without adding a shot: " + scenario);
-            at_target(session, session.alliance == Alliance.BLUE ? new Pose(125, 36, Math.PI)
-                    : new Pose(19, 108, 0));
+            at_target(session, session.alliance == Alliance.BLUE ? BLUE_PARK : RED_PARK);
             safe_cleanup(session);
         }
     }
@@ -202,7 +204,7 @@ public final class AutonomousParkingChecks {
                             : scenario == Scenario.EXPIRED_COLLECTION ? ButineRunner.Outcome.TIMED_OUT
                             : ButineRunner.Outcome.NO_FEASIBLE_RUN),
                     "preflight and request failures keep distinct typed outcomes: " + scenario);
-            at_target(session, new Pose(19, 108, 0));
+            at_target(session, RED_PARK);
             safe_cleanup(session);
         }
     }

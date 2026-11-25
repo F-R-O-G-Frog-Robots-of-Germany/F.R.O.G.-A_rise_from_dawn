@@ -37,7 +37,7 @@ public final class ButineParkingChecks {
         near(144 - red.maxY, blue.minY, "Blue mirrors Red Y bounds");
         VisionPose target = ButineParking.default_target(red, field);
         require(target != null, "nominal Red body can park while retaining all-heading clearance");
-        near(19, target.x, "default leaves exactly one inch of physical body overlap");
+        near(10 + 42.2 / (2 * 2.54), target.x, "default leaves one inch of rear-body overlap");
         near(108, target.y, "default uses center of Red A5");
         near(0, target.heading, "Red default is axis aligned");
         require(target.x > red.maxX, "center and majority of body may remain outside zone");

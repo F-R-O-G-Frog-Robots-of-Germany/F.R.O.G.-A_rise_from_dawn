@@ -673,7 +673,7 @@ public final class PerformanceComparison extends LinearOpMode {
         private static final double POWER_EPSILON = 0.002;
         private static final double SERVO_EPSILON = 0.005;
         private static final int CONSUMERS = 3;
-        private static final String[] MOTOR_NAMES = {"leftFront", "leftRear", "rightFront", "rightRear"};
+        private static final String[] MOTOR_NAMES = {"left_front", "left_back", "right_front", "right_back"};
         private final com.qualcomm.robotcore.hardware.DcMotorEx[] motors =
                 new com.qualcomm.robotcore.hardware.DcMotorEx[MOTOR_NAMES.length];
         private final com.qualcomm.robotcore.hardware.DcMotor.RunMode[] savedModes =
@@ -787,6 +787,9 @@ public final class PerformanceComparison extends LinearOpMode {
                     // Changes of control mode happen outside timing; every transition invalidates both caches.
                     touchedMotor[i] = true;
                     motors[i].setPower(0.0);
+                    motors[i].setDirection(i < 2
+                            ? com.qualcomm.robotcore.hardware.DcMotorSimple.Direction.REVERSE
+                            : com.qualcomm.robotcore.hardware.DcMotorSimple.Direction.FORWARD);
                     activeVelocityMode[i] = settings.outputMode == OutputMode.VELOCITY;
                     motors[i].setMode(settings.outputMode == OutputMode.VELOCITY
                             ? com.qualcomm.robotcore.hardware.DcMotor.RunMode.RUN_USING_ENCODER

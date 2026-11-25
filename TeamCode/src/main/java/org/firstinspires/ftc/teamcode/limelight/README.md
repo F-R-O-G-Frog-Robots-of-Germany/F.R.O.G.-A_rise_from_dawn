@@ -96,17 +96,19 @@ The legacy point planner remains available with `sweepIntake = false` or `Butine
 
 ### Robot footprint and field obstacles
 
-`new Butine.Params()` uses immutable `ButineField.biobuzz()` geometry: an 18 × 18-inch rectangle centered on the localization reference point, a maximum height of 18 inches, and 1 inch beyond the robot body. The all-heading center buffer is its half diagonal plus 1 inch, approximately 13.727922 inches. Physical obstacles and the field perimeter use the same buffer, including when the robot rotates.
+`new Butine.Params()` uses the measured drivetrain width of 45.3 cm and overall length of 18 inches with the intake. The model places the localization reference at the center of the 42.2 cm drivetrain, with 8.31 inches behind it and 9.69 inches ahead. The intake sweep defaults to the full drivetrain width with its mouth at the front edge. `ButineField.biobuzz()` allows a height of 18 inches and adds 1 inch of clearance to the farthest corner from the localization reference, for an all-heading buffer of about 14.17 inches. Obstacles and the field perimeter use that same buffer.
 
-The four FLOWERS and two low frame-support envelopes come from the official STEP model. The center passage is open for this robot: fixed supports were clipped to Z=0–19 inches, under-tile bars do not obstruct passage, and a conservative bound over the Hives' allowed tipping sweep remains above 19 inches. The all-heading center corridor runs from X≈67.63 to 76.37 through the frame. [The geometry record](docs/Butine-Center-Underpass-Geometry-2026-10-18.json) retains the source hash, bounds, vertical checks and official links.
+The four FLOWERS and two low frame-support envelopes come from the official STEP model. Fixed supports were clipped to Z=0–19 inches, under-tile bars do not obstruct passage, and a conservative bound over the Hives' allowed tipping sweep remains above 19 inches. The all-heading center corridor runs from X≈68.07 to 75.93 through the frame. [CAD source hash, bounds and vertical checks](docs/Butine-Center-Underpass-Geometry-2026-10-18.json)
 
-To configure the model before submitting a request:
+This example configures a centered 18 × 18-inch robot and its intake sweep.
 
 ```java
 params.field = ButineField.biobuzz(
         18, 18, 18, // Robot length, width and maximum height, inches.
         1,          // Body clearance, inches.
         0, 0);      // Additional field and tracking reserves, inches.
+params.intakeWidthIn = 18;
+params.intakeForwardOffsetIn = 9;
 ```
 
 The reserves remain distinct from body clearance and increase both obstacle expansion and wall inset. If height + body clearance + field reserve exceeds the verified 19-inch support slice, this factory conservatively blocks the whole center until a suitable new slice is derived. Include every mechanism in its collection configuration and use actual reference-point offsets if the body is not centered. The defaults describe nominal CAD geometry; they do not establish tracking accuracy or a measured physical gap.
