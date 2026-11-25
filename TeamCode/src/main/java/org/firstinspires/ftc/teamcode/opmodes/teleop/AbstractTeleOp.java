@@ -112,8 +112,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
                 after_drive_update();
                 op_mode_loop();
 
-                loopTiming.end_work();
-                publish_loop_telemetry();
+                publish_loop_telemetry(loopTiming.end_work());
             }
         } catch (RuntimeException | Error stopped) {
             failure = stopped;
@@ -131,28 +130,25 @@ public abstract class AbstractTeleOp extends LinearOpMode {
         }
     }
 
-    private void publish_loop_telemetry() {
+    private void publish_loop_telemetry(long now) {
         boolean showLoopTime = CompConfig.loop_time_telemetry_enabled();
-        boolean showDiagnostics = CompConfig.telemetry_enabled();
-        if ((!showLoopTime && !showDiagnostics) || !loopTiming.should_publish_telemetry()) return;
+        boolean showDetails = CompConfig.telemetry_enabled();
+        if (!(showLoopTime || showDetails) || !loopTiming.telemetry_due(now)) return;
 
-        Telemetry display = get_telemetry_manager();
-        if (showDiagnostics) add_loop_telemetry(display);
+        Telemetry output = get_telemetry_manager();
+        if (showDetails) add_loop_telemetry(output);
         if (showLoopTime) {
-            display.addData("Work ms", loopTiming.work_ms());
-            display.addData("Cycle ms", loopTiming.cycle_ms());
-            display.addData("Hz", loopTiming.hz());
+            output.addData("Work ms", loopTiming.work_ms());
+            output.addData("Cycle ms", loopTiming.cycle_ms());
+            output.addData("Hz", loopTiming.hz());
         }
-        if (showDiagnostics && currentPose != null) {
-            display.addData("x [in]", currentPose.x());
-            display.addData("y [in]", currentPose.y());
-            display.addData("heading [°]", toDegrees(currentPose.heading()));
+        if (showDetails && currentPose != null) {
+            output.addData("x [in]", currentPose.x());
+            output.addData("y [in]", currentPose.y());
+            output.addData("heading [°]", toDegrees(currentPose.heading()));
         }
-        display.update();
+        output.update();
     }
-
-    /** Add subclass diagnostics when the active-loop display is due. */
-    protected void add_loop_telemetry(Telemetry display) { }
 
     protected void initialize_hardware() {
         if (CompConfig.panels_enabled()) Panels.INSTANCE.enable();
@@ -265,4 +261,7 @@ public abstract class AbstractTeleOp extends LinearOpMode {
     protected abstract void on_start();
 
     protected abstract void op_mode_loop();
+
+    /** Add optional diagnostics when the base loop publishes telemetry. */
+    protected void add_loop_telemetry(Telemetry output) { }
 }

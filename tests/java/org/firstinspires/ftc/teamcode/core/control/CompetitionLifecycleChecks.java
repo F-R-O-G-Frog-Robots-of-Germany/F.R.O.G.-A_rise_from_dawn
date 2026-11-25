@@ -39,6 +39,7 @@ public final class CompetitionLifecycleChecks {
     private static int checks;
 
     public static void main(String[] args) throws Exception {
+        telemetry_cadence();
         teleop_order();
         auto_order();
         auto_optional_planner();
@@ -50,6 +51,18 @@ public final class CompetitionLifecycleChecks {
             cleanup_failure_without_primary(autonomous);
         }
         System.out.println("Competition lifecycle checks passed: " + checks);
+    }
+
+    private static void telemetry_cadence() {
+        LoopTiming timing = new LoopTiming();
+        long interval = LoopTiming.TELEMETRY_INTERVAL_MS * 1_000_000L;
+        long first = Long.MAX_VALUE - interval / 2;
+        check(timing.telemetry_due(first), "the first active sample publishes immediately");
+        check(!timing.telemetry_due(first), "a sample cannot publish twice");
+        check(!timing.telemetry_due(first + interval - 1), "even across clock wrap, publish waits for the full interval");
+        check(timing.telemetry_due(first + interval), "the next sample publishes at the interval");
+        check(timing.telemetry_due(first + 4 * interval), "a long gap permits a fresh update");
+        check(!timing.telemetry_due(first + 4 * interval + 1), "a long gap does not queue catch-up updates");
     }
 
     private static void teleop_order() throws Exception {

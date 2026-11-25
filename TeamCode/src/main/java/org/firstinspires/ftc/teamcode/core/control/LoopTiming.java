@@ -2,16 +2,15 @@ package org.firstinspires.ftc.teamcode.core.control;
 
 /** Work time excludes telemetry; cycle time includes everything between consecutive starts. */
 public final class LoopTiming {
-    /** Interval configured for FTC telemetry transmission. */
     public static final int TELEMETRY_INTERVAL_MS = 100;
-    private static final int TELEMETRY_INTERVAL_LOOPS = 20;
+    private static final long TELEMETRY_INTERVAL_NANOS = TELEMETRY_INTERVAL_MS * 1_000_000L;
 
     private long previousStart;
     private long currentStart;
-    private int completedLoopsInTelemetryInterval;
-    private boolean telemetryDue;
     private double cycleMs;
     private double workMs;
+    private long lastTelemetryNanos;
+    private boolean telemetryPublished;
 
     public void begin() {
         currentStart = System.nanoTime();
@@ -19,17 +18,17 @@ public final class LoopTiming {
         previousStart = currentStart;
     }
 
-    public void end_work() {
-        workMs = (System.nanoTime() - currentStart) / 1e6;
-        completedLoopsInTelemetryInterval++;
-        telemetryDue = completedLoopsInTelemetryInterval == TELEMETRY_INTERVAL_LOOPS;
-        if (telemetryDue) completedLoopsInTelemetryInterval = 0;
+    public long end_work() {
+        long now = System.nanoTime();
+        workMs = (now - currentStart) / 1e6;
+        return now;
     }
 
-    /** Consume the publication slot offered after every twentieth completed loop. */
-    public boolean should_publish_telemetry() {
-        if (!telemetryDue) return false;
-        telemetryDue = false;
+    /** Reserve a telemetry update at most once per interval, starting with the first sample. */
+    public boolean telemetry_due(long now) {
+        if (telemetryPublished && now - lastTelemetryNanos < TELEMETRY_INTERVAL_NANOS) return false;
+        lastTelemetryNanos = now;
+        telemetryPublished = true;
         return true;
     }
 

@@ -5,10 +5,10 @@ import com.pedropathing.follower.ManualDrive;
 import com.pedropathing.math.Vector2D;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 
+import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.core.units.Units.Alliance;
 import org.firstinspires.ftc.teamcode.core.units.Units.RobotState;
 
-import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.Robot;
 import org.firstinspires.ftc.teamcode.core.control.CompConfig;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
@@ -97,12 +97,12 @@ public class Main extends AbstractTeleOp {
     }
 
     @Override
-    protected void add_loop_telemetry(Telemetry display) {
-        display.addData("Intake", intakeSubsystem.get_intake_mode());
-        display.addData("Full intake paused", intakeSubsystem.full_load_held());
-        display.addData("Shot feed", shooterSubsystem.feed_status());
-        display.addData("Shooter RPM", shooterSubsystem.get_current_rpm());
-        display.addData("RPM sample valid", shooterSubsystem.velocity_valid());
+    protected void add_loop_telemetry(Telemetry output) {
+        output.addData("Intake", intakeSubsystem.get_intake_mode());
+        output.addData("Full intake paused", intakeSubsystem.full_load_held());
+        output.addData("Shot feed", shooterSubsystem.feed_status());
+        output.addData("Shooter RPM", shooterSubsystem.get_current_rpm());
+        output.addData("RPM sample valid", shooterSubsystem.velocity_valid());
     }
 
     @Override

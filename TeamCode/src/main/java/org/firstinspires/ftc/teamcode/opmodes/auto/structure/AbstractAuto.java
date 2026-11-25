@@ -578,10 +578,10 @@ abstract class General extends LinearOpMode {
             throw new AutoStopped();
         }
         shooterSubsystem.update(pose.x(), pose.y(), poseValid);
-        loopTiming.end_work();
+        long now = loopTiming.end_work();
         boolean showLoopTime = CompConfig.loop_time_telemetry_enabled();
         boolean showDiagnostics = CompConfig.telemetry_enabled();
-        if ((!showLoopTime && !showDiagnostics) || !loopTiming.should_publish_telemetry()) return;
+        if ((!showLoopTime && !showDiagnostics) || !loopTiming.telemetry_due(now)) return;
 
         if (showLoopTime) {
             telemetry.addData("Work ms", loopTiming.work_ms());
