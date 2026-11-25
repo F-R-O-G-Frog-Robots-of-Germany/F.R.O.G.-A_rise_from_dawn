@@ -16,6 +16,7 @@ public final class FiniteValueChecks {
             check_sample(invalid);
             check_motor(invalid);
         }
+        check_velocity_caching();
         check_velocity_sampling();
         System.out.println("Passed " + checks + " finite-value boundary checks");
     }
@@ -84,6 +85,54 @@ public final class FiniteValueChecks {
         check(hardware.invalidWrites == 0, "motor hardware never receives nonfinite commands");
     }
 
+    private static void check_velocity_caching() {
+        MotorDouble hardware = new MotorDouble();
+        CachedMotor motor = new CachedMotor(hardware.motor, 0.002);
+        motor.set_velocity(900);
+        motor.set_velocity(900);
+        check(hardware.velocityWrites == 1, "identical velocity targets are cached");
+        motor.set_velocity(900.0001);
+        check(hardware.velocityWrites == 2, "small velocity changes are forwarded exactly");
+        motor.set_velocity(-900);
+        close(hardware.velocityCommand, -900);
+        motor.set_velocity(0);
+        check(hardware.velocityWrites == 4, "zero always replaces a nonzero velocity target");
+        for (double invalid : INVALID_VALUES) {
+            check(!motor.set_velocity(invalid), "cached zero still rejects invalid velocity input");
+        }
+        check(hardware.velocityWrites == 4, "invalid inputs reuse an already applied zero target");
+
+        motor.set_velocity(900);
+        motor.set_power(0.5);
+        int beforeVelocity = hardware.velocityWrites;
+        motor.set_velocity(900);
+        check(hardware.velocityWrites == beforeVelocity + 1, "power commands invalidate the velocity target cache");
+        int beforePower = hardware.powerWrites;
+        motor.set_power(0.5);
+        check(hardware.powerWrites == beforePower + 1, "velocity commands invalidate the power cache");
+        motor.set_velocity(900);
+        motor.invalidate();
+        beforeVelocity = hardware.velocityWrites;
+        motor.set_velocity(900);
+        check(hardware.velocityWrites == beforeVelocity + 1, "configuration invalidation reissues unchanged velocity");
+
+        hardware.failVelocityWrite = true;
+        boolean failed = false;
+        try {
+            motor.set_velocity(1200);
+        } catch (IllegalStateException expected) {
+            failed = true;
+        }
+        check(failed, "SDK command failures propagate to the caller");
+        beforeVelocity = hardware.velocityWrites;
+        motor.set_velocity(900);
+        check(hardware.velocityWrites == beforeVelocity + 1,
+                "a failed changed command invalidates the previous target for recovery");
+        close(hardware.velocityCommand, 900);
+        motor.set_velocity(900);
+        check(hardware.velocityWrites == beforeVelocity + 1, "successful recovery restores caching");
+    }
+
     private static void check_velocity_sampling() {
         MotorDouble hardware = new MotorDouble();
         CachedMotor motor = new CachedMotor(hardware.motor, 0.002);
@@ -119,7 +168,8 @@ public final class FiniteValueChecks {
 
     private static final class MotorDouble {
         private double power, velocityCommand, velocityReading;
-        private int powerWrites, velocityReads, invalidWrites;
+        private int powerWrites, velocityWrites, velocityReads, invalidWrites;
+        private boolean failVelocityWrite;
         private final DcMotorEx motor = (DcMotorEx) Proxy.newProxyInstance(
                 DcMotorEx.class.getClassLoader(), new Class<?>[]{DcMotorEx.class}, (proxy, method, values) -> {
                     switch (method.getName()) {
@@ -130,7 +180,12 @@ public final class FiniteValueChecks {
                             return null;
                         case "setVelocity":
                             velocityCommand = (double) values[0];
+                            velocityWrites++;
                             if (!Double.isFinite(velocityCommand)) invalidWrites++;
+                            if (failVelocityWrite) {
+                                failVelocityWrite = false;
+                                throw new IllegalStateException("Injected velocity write failure");
+                            }
                             return null;
                         case "getVelocity":
                             velocityReads++;

@@ -13,7 +13,7 @@ import org.firstinspires.ftc.teamcode.core.units.Units;
 
 public class Shooter {
     private static final double GEAR_RATIO = 1.0;
-    public static final double TICKS_PER_REV = 2048.0;
+    public static final double TICKS_PER_REV = 28.0; // AndyMark encoder counts per shaft revolution.
     public static final double ENCODER_TICKS_PER_REV = TICKS_PER_REV * GEAR_RATIO;
     public static final int STANDARD_RPM = 3000;
     public static final boolean DEFAULT_FIXED_RPM = false;
@@ -427,7 +427,10 @@ public class Shooter {
         if (leftVelocity.is_valid() && rightVelocity.is_valid()) {
             velocityTicksPerSec = leftVelocity.get_value() * 0.5 + rightVelocity.get_value() * 0.5;
         }
-        if (velocityValid) currentRpm = velocityTicksPerSec * (60.0 / ENCODER_TICKS_PER_REV);
+        if (velocityValid) {
+            double rpm = velocityTicksPerSec * (60.0 / ENCODER_TICKS_PER_REV);
+            currentRpm = Double.isInfinite(rpm) ? Math.copySign(Double.MAX_VALUE, rpm) : rpm;
+        }
         if (shootingRequested) {
             state = State.SHOOT;
         } else {

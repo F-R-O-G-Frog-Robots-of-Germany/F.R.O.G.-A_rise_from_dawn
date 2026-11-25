@@ -8,6 +8,8 @@ public final class CachedMotor {
     private final double eps;
     private double last;
     private boolean initialized;
+    private double lastVelocity;
+    private boolean velocityInitialized;
     private final SensorReadings.Sample velocity = new SensorReadings.Sample();
 
     public CachedMotor(DcMotorEx motor, double eps) {
@@ -30,6 +32,7 @@ public final class CachedMotor {
         p = valid ? Math.max(-1, Math.min(1, p)) : 0;
         boolean stopNow = (p == 0.0 && last != 0.0); // always send an exact stop
         if (stopNow || !initialized || Math.abs(p - last) >= eps) {
+            velocityInitialized = false;
             motor.setPower(p);
             last = p;
             initialized = true;
@@ -39,8 +42,14 @@ public final class CachedMotor {
 
     public synchronized boolean set_velocity(double ticksPerSecond) {
         boolean valid = SensorReadings.is_valid(ticksPerSecond);
-        motor.setVelocity(valid ? ticksPerSecond : 0);
+        double target = valid ? ticksPerSecond : 0;
         initialized = false;
+        if (!velocityInitialized || target != lastVelocity) {
+            velocityInitialized = false;
+            motor.setVelocity(target);
+            lastVelocity = target;
+            velocityInitialized = true;
+        }
         return valid;
     }
 
@@ -56,9 +65,10 @@ public final class CachedMotor {
 
     public synchronized double get_power() { return last; }
 
-    /** Forward the next set_power() to the SDK after mode/direction changes; SDK caching still applies. */
+    /** Forward the next power or velocity command after mode, direction, or PIDF changes. */
     public synchronized void invalidate() {
         initialized = false;
+        velocityInitialized = false;
     }
 
     /** Underlying motor for reads (position, velocity) and mode/direction/zero-power config. */

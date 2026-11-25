@@ -1,11 +1,15 @@
 package org.firstinspires.ftc.teamcode.opmodes.teleop.test;
 
+import com.pedropathing.localization.Localizer;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.Gamepad;
+import com.qualcomm.robotcore.hardware.HardwareMap;
+import com.qualcomm.robotcore.hardware.Servo;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
+import org.firstinspires.ftc.teamcode.core.hardware.CachedServo;
 import org.firstinspires.ftc.teamcode.core.control.ShooterSelection;
 import org.firstinspires.ftc.robotcore.external.Telemetry;
 import org.firstinspires.ftc.teamcode.subsystems.Shooter;
@@ -33,7 +37,7 @@ public final class ShooterMotorTunerChecks {
         tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
         command(tuner, true);
-        double target = 4000 * Shooter.ENCODER_TICKS_PER_REV / 60.0;
+        double target = (double) get(tuner, "commandedRpm") * Shooter.ENCODER_TICKS_PER_REV / 60.0;
         close(velocity[0], target); close(velocity[1], target);
         call(tuner, "update_controls");
         command(tuner, true);
@@ -68,6 +72,10 @@ public final class ShooterMotorTunerChecks {
         command(tuner, true);
         close(velocity[0], 0); close(velocity[1], 0);
         input_boundaries();
+        velocity_cache_invalidation();
+        manual_tuning_without_pinpoint(false);
+        manual_tuning_without_pinpoint(true);
+        distance_rpm_without_hood();
         System.out.println("Passed " + checks + " shooter motor tuner checks");
     }
 
@@ -75,6 +83,9 @@ public final class ShooterMotorTunerChecks {
         ShooterPidfTuner tuner = new ShooterPidfTuner();
         tuner.gamepad1 = new Gamepad();
         tuner.gamepad2 = new Gamepad();
+        set(tuner, "localizer", Proxy.newProxyInstance(Localizer.class.getClassLoader(),
+                new Class<?>[]{Localizer.class}, (proxy, method, values) -> null));
+        set(tuner, "hoodServo", new CachedServo(servo(new int[1]), Shooter.HOOD_POSITION_EPSILON));
         Gamepad one = new Gamepad(), two = new Gamepad();
         one.start = true;
         two.y = true;
@@ -150,10 +161,124 @@ public final class ShooterMotorTunerChecks {
         close(shooter.get_fixed_hood_angle(), Shooter.DEFAULT_HOOD_ANGLE_DEG + 1);
     }
 
+    private static void velocity_cache_invalidation() throws Exception {
+        ShooterPidfTuner tuner = new ShooterPidfTuner();
+        int[] writes = {0, 0};
+        for (int index = 0; index < writes.length; index++) {
+            final int motorIndex = index;
+            DcMotorEx hardware = (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(),
+                    new Class<?>[]{DcMotorEx.class}, (proxy, method, values) -> {
+                        if (method.getName().equals("setVelocity")) writes[motorIndex]++;
+                        return null;
+                    });
+            set(tuner, index == 0 ? "shooterMotorLeft" : "shooterMotorRight", new CachedMotor(hardware, 0.002));
+        }
+        set(tuner, "shooterEnabled", true);
+        set(tuner, "validTargets", true);
+        command(tuner, true);
+        command(tuner, true);
+        close(writes[0], 1);
+        close(writes[1], 1);
+        call(tuner, "apply_pidf");
+        command(tuner, true);
+        close(writes[0], 2);
+        close(writes[1], 2);
+        command(tuner, true);
+        close(writes[0], 2);
+        close(writes[1], 2);
+        command(tuner, false);
+        close(writes[0], 3);
+        close(writes[1], 3);
+    }
+
+    private static void manual_tuning_without_pinpoint(boolean withHood) throws Exception {
+        ShooterPidfTuner tuner = new ShooterPidfTuner();
+        tuner.gamepad1 = new Gamepad();
+        tuner.gamepad2 = new Gamepad();
+        double[] velocity = new double[2];
+        double[][] pidf = new double[2][4];
+        DcMotorEx left = motor(velocity, pidf, 0).raw();
+        DcMotorEx right = motor(velocity, pidf, 1).raw();
+        int[] hoodWrites = new int[1];
+        Servo hood = withHood ? servo(hoodWrites) : null;
+        tuner.hardwareMap = new HardwareMap(null, null) {
+            @Override public <T> T get(Class<? extends T> type, String name) {
+                if (name.equals("shooterMotorLeft")) return type.cast(left);
+                if (name.equals("shooterMotorRight")) return type.cast(right);
+                throw new AssertionError("Unexpected required hardware " + name);
+            }
+
+            @Override public <T> T tryGet(Class<? extends T> type, String name) {
+                if (name.equals("servoHood")) return type.cast(hood);
+                if (name.equals("pinpoint")) return null;
+                throw new AssertionError("Unexpected optional hardware " + name);
+            }
+        };
+        Class<?> opModeState = Class.forName("com.qualcomm.robotcore.eventloop.opmode.OpModeInternal");
+        Field started = opModeState.getDeclaredField("isStarted");
+        Field stopped = opModeState.getDeclaredField("stopRequested");
+        started.setAccessible(true);
+        stopped.setAccessible(true);
+        int[] updates = new int[1];
+        tuner.telemetry = (Telemetry) Proxy.newProxyInstance(Telemetry.class.getClassLoader(),
+                new Class<?>[]{Telemetry.class}, (proxy, method, values) -> {
+                    if (!method.getName().equals("update")) return null;
+                    if (++updates[0] == 1) {
+                        started.setBoolean(tuner, true);
+                    } else if (updates[0] == 2) {
+                        Gamepad one = new Gamepad(), two = new Gamepad();
+                        one.start = true;
+                        one.y = true;
+                        two.y = true;
+                        two.a = true;
+                        two.dpad_up = true;
+                        tuner.gamepad1.copy(one);
+                        tuner.gamepad2.copy(two);
+                    } else {
+                        close((double) get(tuner, "targetRpm"), 1100.0);
+                        double target = 1100.0 * 28.0 / 60.0; // AndyMark encoder on the 1:1 flywheel drive.
+                        close(velocity[0], target);
+                        close(velocity[1], target);
+                        close((boolean) get(tuner, "distanceModelEnabled") ? 1 : 0, 0);
+                        if (!get(tuner, "captureMessage").equals("Sample capture requires Pinpoint and servoHood")) {
+                            throw new AssertionError("Missing hardware must prevent sample capture");
+                        }
+                        stopped.setBoolean(tuner, true);
+                    }
+                    return true;
+                });
+        tuner.runOpMode();
+        close(updates[0], 3);
+        close(hoodWrites[0], withHood ? 2 : 0);
+        close(velocity[0], 0);
+        close(velocity[1], 0);
+    }
+
+    private static void distance_rpm_without_hood() throws Exception {
+        ShooterPidfTuner tuner = new ShooterPidfTuner();
+        set(tuner, "distanceModelEnabled", true);
+        ((double[]) get(tuner, "hoodCoefficients"))[0] = Double.NaN;
+        Shooter.HiveDistance hive = new Shooter.HiveDistance(new Shooter.HivePosition("test", 0, 0, 0), 40);
+        Method update = ShooterPidfTuner.class.getDeclaredMethod("update_targets", Shooter.HiveDistance.class);
+        update.setAccessible(true);
+        close((boolean) update.invoke(tuner, hive) ? 1 : 0, 1);
+        close((double) get(tuner, "commandedRpm"),
+                Shooter.calculate_rpm(40, Shooter.DISTANCE_A, Shooter.DISTANCE_B, Shooter.DISTANCE_C));
+    }
+
+    private static Servo servo(int[] writes) {
+        return (Servo) Proxy.newProxyInstance(Servo.class.getClassLoader(), new Class<?>[]{Servo.class},
+                (proxy, method, values) -> {
+                    if (method.getName().equals("setPosition")) writes[0]++;
+                    return null;
+                });
+    }
+
     private static CachedMotor motor(double[] velocity, double[][] pidf, int index) {
         return new CachedMotor((DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(),
                 new Class<?>[]{DcMotorEx.class}, (proxy, method, values) -> {
                     if (method.getName().equals("setVelocity")) velocity[index] = (double) values[0];
+                    if (method.getName().equals("getVelocity")) return velocity[index];
                     if (method.getName().equals("setVelocityPIDFCoefficients")) {
                         for (int i = 0; i < 4; i++) pidf[index][i] = (double) values[i];
                     }

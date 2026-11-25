@@ -1,6 +1,6 @@
 package org.firstinspires.ftc.teamcode.opmodes.teleop.test;
 
-import com.pedropathing.follower.Follower;
+import com.pedropathing.localization.Localizer;
 import com.pedropathing.math.Pose;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
@@ -52,7 +52,8 @@ public class ShooterPidfTuner extends LinearOpMode {
     private CachedMotor shooterMotorLeft;
     private CachedMotor shooterMotorRight;
     private CachedServo hoodServo;
-    private Follower follower;
+    private Localizer localizer;
+    private String pinpointFault;
     private Alliance alliance;
     private double targetRpm = DEFAULT_TARGET_RPM;
     private PIDFCoefficients pidf = new PIDFCoefficients(DEFAULT_P, DEFAULT_I, DEFAULT_D, DEFAULT_F);
@@ -93,29 +94,35 @@ public class ShooterPidfTuner extends LinearOpMode {
             shooterMotorRight.set_power(0.0);
             shooterMotorRight.raw().setMode(DcMotor.RunMode.RUN_USING_ENCODER);
             shooterMotorRight.raw().setZeroPowerBehavior(DcMotor.ZeroPowerBehavior.FLOAT);
-            hoodServo = new CachedServo(hardwareMap.get(Servo.class, "servoHood"), Shooter.HOOD_POSITION_EPSILON);
-            command_hood();
+            Servo servo = hardwareMap.tryGet(Servo.class, "servoHood");
+            if (servo != null) {
+                hoodServo = new CachedServo(servo, Shooter.HOOD_POSITION_EPSILON);
+                command_hood();
+            }
             apply_pidf();
 
-            follower = Constants.create_follower(hardwareMap);
             alliance = LastPositionStorage.get_current_alliance();
-            follower.setPose(new Pose(START_X, START_Y, START_HEADING));
+            initialize_pinpoint();
             telemetry.setMsTransmissionInterval(LOOP_PERIOD_MS);
 
             while (opModeInInit()) {
                 if (gamepad2.bWasPressed()) {
                     alliance = alliance == Alliance.RED ? Alliance.BLUE : Alliance.RED;
                 }
-                follower.update();
-                Pose pose = follower.pose();
+                Pose pose = read_pose();
                 telemetry.addData("Alliance (G2 B toggles during INIT)", alliance);
                 add_position_telemetry(pose, target_hive(pose));
                 telemetry.addData("Target RPM", "%.1f", targetRpm);
                 telemetry.addLine("Start: toggle | Y/B: RPM | D-pad: P/I/D/F");
                 telemetry.addLine("G1 X: disable/enable shooterMotorRight (both motors enabled by default)");
                 telemetry.addLine("Bumpers: decrease/increase selected PIDF");
-                telemetry.addLine("G2 Y: both models; X: RPM/hood curve; left/right: A/B/C; bumpers: edit");
-                telemetry.addLine("G2 up/down: manual hood +/-1 deg; A: capture sample");
+                if (localizer != null) {
+                    telemetry.addLine("G2 Y: distance model; left/right: A/B/C; bumpers: edit");
+                }
+                if (hoodServo != null) telemetry.addLine("G2 up/down: manual hood +/-1 deg");
+                if (localizer != null && hoodServo != null) {
+                    telemetry.addLine("G2 X: RPM/hood curve; A: capture sample");
+                }
                 telemetry.addLine("Edits are local to this run; no competition constants are changed");
                 telemetry.update();
                 sleep(LOOP_PERIOD_MS);
@@ -129,40 +136,29 @@ public class ShooterPidfTuner extends LinearOpMode {
             start_controls();
 
             while (opModeIsActive()) {
-                follower.update();
+                Pose pose = read_pose();
                 update_controls();
-                Pose pose = follower.pose();
                 Shooter.HiveDistance hive = target_hive(pose);
                 SensorReadings.Sample velocity = shooterMotorLeft.sample_velocity();
                 SensorReadings.Sample velocity2 = shooterMotorRight.sample_velocity();
                 measuredRpm = velocity.get_value() / Shooter.ENCODER_TICKS_PER_REV * 60.0;
                 measuredRpm2 = velocity2.get_value() / Shooter.ENCODER_TICKS_PER_REV * 60.0;
                 update_model_controls();
-                validTargets = !distanceModelEnabled || hive.valid;
-                if (distanceModelEnabled) {
-                    Shooter.ShotSolution solution = Shooter.calculate_shot_solution(hive.distance,
-                            coefficients[0], coefficients[1], coefficients[2],
-                            hoodCoefficients[0], hoodCoefficients[1], hoodCoefficients[2]);
-                    validTargets = validTargets && solution.valid;
-                    if (validTargets) {
-                        commandedRpm = solution.rpm;
-                        commandedHoodAngle = solution.hoodAngleDegrees;
-                    }
-                } else {
-                    commandedRpm = targetRpm;
-                    commandedHoodAngle = manualHoodAngle;
-                }
-                if (validTargets) validTargets = command_hood();
+                validTargets = update_targets(hive);
                 if (!validTargets) {
-                    modelMessage = "Invalid shot or hood mapping; motor stopped, hood holding last command";
+                    modelMessage = "Invalid target; flywheels stopped";
                 } else {
-                    modelMessage = "Fit both curves to matched lowest-reliable-RPM shot rows";
+                    modelMessage = localizer == null ? "Manual RPM requires no Pinpoint"
+                            : hoodServo == null ? "RPM curve only"
+                            : "Fit both curves to matched lowest-reliable-RPM shot rows";
                 }
                 validTargets &= command_flywheels(velocity.is_valid()
                         && (!rightMotorEnabled || velocity2.is_valid()));
 
                 if (gamepad2.aWasPressed()) {
-                    if (shooterEnabled && validTargets && commandedRpm > 0
+                    if (localizer == null || hoodServo == null) {
+                        captureMessage = "Sample capture requires Pinpoint and servoHood";
+                    } else if (shooterEnabled && validTargets && commandedRpm > 0
                             && hive.valid && velocity.is_valid()
                             && Math.abs(measuredRpm - commandedRpm) <= Shooter.SHOOT_SPEED_TOLERANCE_RPM
                             && (!rightMotorEnabled || (velocity2.is_valid()
@@ -190,11 +186,53 @@ public class ShooterPidfTuner extends LinearOpMode {
                 shooterMotorRight.set_velocity(0.0);
                 shooterMotorRight.set_power(0.0);
             }
-            if (follower != null) {
-                follower.stop();
-                follower.drivetrain.stop();
-            }
         }
+    }
+
+    private void initialize_pinpoint() {
+        try {
+            localizer = Constants.create_optional_pinpoint_localizer(hardwareMap);
+            if (localizer != null) localizer.setPose(new Pose(START_X, START_Y, START_HEADING));
+        } catch (RuntimeException failure) {
+            localizer = null;
+            pinpointFault = failure.toString();
+        }
+    }
+
+    private Pose read_pose() {
+        if (localizer == null) return null;
+        try {
+            localizer.update();
+            return localizer.pose();
+        } catch (RuntimeException failure) {
+            localizer = null;
+            pinpointFault = failure.toString();
+            if (distanceModelEnabled) {
+                shooterEnabled = false;
+                distanceModelEnabled = false;
+            }
+            return null;
+        }
+    }
+
+    private boolean update_targets(Shooter.HiveDistance hive) {
+        if (!distanceModelEnabled) {
+            commandedRpm = targetRpm;
+            commandedHoodAngle = manualHoodAngle;
+        } else if (!hive.valid) {
+            return false;
+        } else if (hoodServo == null) {
+            commandedRpm = Shooter.calculate_rpm(hive.distance, coefficients[0], coefficients[1], coefficients[2]);
+            return SensorReadings.is_valid(commandedRpm);
+        } else {
+            Shooter.ShotSolution solution = Shooter.calculate_shot_solution(hive.distance,
+                    coefficients[0], coefficients[1], coefficients[2],
+                    hoodCoefficients[0], hoodCoefficients[1], hoodCoefficients[2]);
+            if (!solution.valid) return false;
+            commandedRpm = solution.rpm;
+            commandedHoodAngle = solution.hoodAngleDegrees;
+        }
+        return hoodServo == null || command_hood();
     }
 
     /** Track the angle actually sent, including the servo cache's deadband. */
@@ -238,6 +276,7 @@ public class ShooterPidfTuner extends LinearOpMode {
         }
 
         if (gamepad1.yWasPressed()) {
+
             set_target_rpm(targetRpm + RPM_STEP);
         }
         if (gamepad1.bWasPressed()) {
@@ -288,9 +327,11 @@ public class ShooterPidfTuner extends LinearOpMode {
 
     private void apply_pidf() {
         if (shooterMotorLeft != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
+            shooterMotorLeft.invalidate();
             shooterMotorLeft.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
         }
         if (shooterMotorRight != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
+            shooterMotorRight.invalidate();
             shooterMotorRight.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
         }
     }
@@ -306,12 +347,13 @@ public class ShooterPidfTuner extends LinearOpMode {
     private void update_model_controls() {
         boolean up = gamepad2.dpadUpWasPressed();
         boolean down = gamepad2.dpadDownWasPressed();
-        if (gamepad2.yWasPressed()) distanceModelEnabled = !distanceModelEnabled;
-        if (gamepad2.xWasPressed()) editingHood = !editingHood;
-        if (!distanceModelEnabled) {
+        if (gamepad2.yWasPressed() && localizer != null) distanceModelEnabled = !distanceModelEnabled;
+        if (!distanceModelEnabled && hoodServo != null) {
             if (up) manualHoodAngle = Math.min(Shooter.HOOD_MAX_ANGLE_DEG, manualHoodAngle + 1);
             if (down) manualHoodAngle = Math.max(Shooter.HOOD_MIN_ANGLE_DEG, manualHoodAngle - 1);
         }
+        if (localizer == null) return;
+        if (gamepad2.xWasPressed() && hoodServo != null) editingHood = !editingHood;
         if (gamepad2.dpadLeftWasPressed()) selectedCoefficient = (selectedCoefficient + 2) % 3;
         if (gamepad2.dpadRightWasPressed()) selectedCoefficient = (selectedCoefficient + 1) % 3;
         double[] curve = editingHood ? hoodCoefficients : coefficients;
@@ -332,6 +374,10 @@ public class ShooterPidfTuner extends LinearOpMode {
     }
 
     private void add_position_telemetry(Pose pose, Shooter.HiveDistance hive) {
+        telemetry.addData("Pinpoint", localizer != null ? "Available"
+                : pinpointFault == null ? "Unavailable; manual RPM" : pinpointFault);
+        telemetry.addData("servoHood", hoodServo != null ? "Available" : "Unavailable");
+        if (localizer == null) return;
         telemetry.addData("Target hive", hive.valid ? hive.position.name : "Unavailable");
         telemetry.addData("Start position", "x %.2f in, y %.2f in, heading %.1f deg",
                 START_X, START_Y, Math.toDegrees(START_HEADING));
@@ -358,13 +404,15 @@ public class ShooterPidfTuner extends LinearOpMode {
         telemetry.addData("A (RPM/in^2)", "%.8f", coefficients[0]);
         telemetry.addData("B (RPM/in)", "%.8f", coefficients[1]);
         telemetry.addData("C (RPM)", "%.8f", coefficients[2]);
-        telemetry.addData("Hood A (deg/in^2)", "%.8f", hoodCoefficients[0]);
-        telemetry.addData("Hood B (deg/in)", "%.8f", hoodCoefficients[1]);
-        telemetry.addData("Hood C (deg)", "%.8f", hoodCoefficients[2]);
-        telemetry.addData("Commanded hood [deg]", "%.2f", commandedHoodAngle);
-        telemetry.addData("Applied hood command [deg]", "%.2f", appliedHoodAngle);
-        telemetry.addData("Hood servo position (last sent)", appliedHoodPosition);
-        telemetry.addData("Hood command settled (timer only)", hood_settled());
+        if (hoodServo != null) {
+            telemetry.addData("Hood A (deg/in^2)", "%.8f", hoodCoefficients[0]);
+            telemetry.addData("Hood B (deg/in)", "%.8f", hoodCoefficients[1]);
+            telemetry.addData("Hood C (deg)", "%.8f", hoodCoefficients[2]);
+            telemetry.addData("Commanded hood [deg]", "%.2f", commandedHoodAngle);
+            telemetry.addData("Applied hood command [deg]", "%.2f", appliedHoodAngle);
+            telemetry.addData("Hood servo position (last sent)", appliedHoodPosition);
+            telemetry.addData("Hood command settled (timer only)", hood_settled());
+        }
         telemetry.addData("Last captured sample: distance, RPM, hood", capturedSample);
         telemetry.addData("Capture status", captureMessage);
         telemetry.addData("Model", modelMessage);
@@ -388,6 +436,7 @@ public class ShooterPidfTuner extends LinearOpMode {
 
     private enum PidfParameter {
         P, I, D, F
+
     }
 
 }
