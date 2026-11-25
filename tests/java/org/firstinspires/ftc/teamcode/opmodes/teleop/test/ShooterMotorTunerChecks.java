@@ -6,6 +6,7 @@ import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.teamcode.core.hardware.CachedMotor;
@@ -24,9 +25,11 @@ public final class ShooterMotorTunerChecks {
         tuner.gamepad2 = new Gamepad();
         Gamepad buttons = new Gamepad();
         double[] velocity = {0, 0};
+        int[] velocityWrites = {0, 0};
+        boolean[] failNextWrite = {false, false};
         double[][] pidf = {new double[4], new double[4]};
-        set(tuner, "shooterMotorLeft", motor(velocity, pidf, 0));
-        set(tuner, "shooterMotorRight", motor(velocity, pidf, 1));
+        set(tuner, "shooterMotorLeft", motor(velocity, velocityWrites, failNextWrite, pidf, 0));
+        set(tuner, "shooterMotorRight", motor(velocity, velocityWrites, failNextWrite, pidf, 1));
         set(tuner, "validTargets", true);
         call(tuner, "apply_pidf");
         for (int i = 0; i < 4; i++) close(pidf[0][i], pidf[1][i]);
@@ -42,12 +45,14 @@ public final class ShooterMotorTunerChecks {
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], target);
+        close(velocityWrites[0], 2); close(velocityWrites[1], 2);
         buttons.start = false;
         buttons.x = true;
         tuner.gamepad1.copy(buttons);
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], 0);
+        close(velocityWrites[0], 2); close(velocityWrites[1], 3);
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], target); close(velocity[1], 0);
@@ -62,6 +67,7 @@ public final class ShooterMotorTunerChecks {
 
         command(tuner, false);
         close(velocity[0], 0); close(velocity[1], 0);
+        close(velocityWrites[0], 3); close(velocityWrites[1], 5);
         set(tuner, "validTargets", false);
         command(tuner, true);
         close(velocity[0], 0); close(velocity[1], 0);
@@ -71,12 +77,52 @@ public final class ShooterMotorTunerChecks {
         call(tuner, "update_controls");
         command(tuner, true);
         close(velocity[0], 0); close(velocity[1], 0);
+        velocity_cache(tuner, velocity, velocityWrites, failNextWrite, target);
         input_boundaries();
         velocity_cache_invalidation();
         manual_tuning_without_pinpoint(false);
         manual_tuning_without_pinpoint(true);
         distance_rpm_without_hood();
         System.out.println("Passed " + checks + " shooter motor tuner checks");
+    }
+
+    private static void velocity_cache(ShooterPidfTuner tuner, double[] velocity, int[] writes,
+                                       boolean[] failNextWrite, double target) throws Exception {
+        set(tuner, "shooterEnabled", true);
+        double rpm = (double) get(tuner, "targetRpm");
+        set(tuner, "commandedRpm", rpm);
+        command(tuner, true, 0);
+        int leftWrites = writes[0], rightWrites = writes[1];
+        command(tuner, true, 249_999_999L);
+        close(writes[0], leftWrites); close(writes[1], rightWrites);
+        long refresh = 250_000_000L;
+        command(tuner, true, refresh);
+        close(writes[0], ++leftWrites); close(writes[1], ++rightWrites);
+
+        call(tuner, "apply_pidf");
+        command(tuner, true, refresh + 1);
+        close(writes[0], ++leftWrites); close(writes[1], ++rightWrites);
+
+        set(tuner, "commandedRpm", rpm + 100.0);
+        failNextWrite[0] = true;
+        try {
+            command(tuner, true, refresh + 2);
+            throw new AssertionError("Expected motor write failure");
+        } catch (InvocationTargetException e) {
+            if (!(e.getCause() instanceof IllegalStateException)) throw e;
+        }
+        close(writes[0], ++leftWrites);
+        set(tuner, "commandedRpm", rpm);
+        command(tuner, true, refresh + 3);
+        close(writes[0], ++leftWrites); close(writes[1], rightWrites);
+        close(velocity[0], target); close(velocity[1], target);
+
+        set(tuner, "commandedRpm", Double.NaN);
+        if (command(tuner, true, refresh + 4)) throw new AssertionError("Invalid target accepted");
+        close(velocity[0], 0); close(velocity[1], 0);
+        set(tuner, "commandedRpm", rpm);
+        command(tuner, true, refresh + 5);
+        close(velocity[0], target); close(velocity[1], target);
     }
 
     private static void input_boundaries() throws Exception {
@@ -275,9 +321,21 @@ public final class ShooterMotorTunerChecks {
     }
 
     private static CachedMotor motor(double[] velocity, double[][] pidf, int index) {
+        return motor(velocity, new int[velocity.length], new boolean[velocity.length], pidf, index);
+    }
+
+    private static CachedMotor motor(double[] velocity, int[] writes, boolean[] failNextWrite,
+                                     double[][] pidf, int index) {
         return new CachedMotor((DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(),
                 new Class<?>[]{DcMotorEx.class}, (proxy, method, values) -> {
-                    if (method.getName().equals("setVelocity")) velocity[index] = (double) values[0];
+                    if (method.getName().equals("setVelocity")) {
+                        velocity[index] = (double) values[0];
+                        writes[index]++;
+                        if (failNextWrite[index]) {
+                            failNextWrite[index] = false;
+                            throw new IllegalStateException("Simulated motor write failure");
+                        }
+                    }
                     if (method.getName().equals("getVelocity")) return velocity[index];
                     if (method.getName().equals("setVelocityPIDFCoefficients")) {
                         for (int i = 0; i < 4; i++) pidf[index][i] = (double) values[i];
@@ -303,8 +361,13 @@ public final class ShooterMotorTunerChecks {
     }
 
     private static void command(ShooterPidfTuner tuner, boolean valid) throws Exception {
-        Method method = ShooterPidfTuner.class.getDeclaredMethod("command_flywheels", boolean.class);
-        method.setAccessible(true); method.invoke(tuner, valid);
+        command(tuner, valid, 0);
+    }
+
+    private static boolean command(ShooterPidfTuner tuner, boolean valid, long now) throws Exception {
+        Method method = ShooterPidfTuner.class.getDeclaredMethod("command_flywheels", boolean.class, long.class);
+        method.setAccessible(true);
+        return (boolean) method.invoke(tuner, valid, now);
     }
 
     private static void close(double actual, double expected) {

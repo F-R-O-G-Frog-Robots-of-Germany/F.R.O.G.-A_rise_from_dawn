@@ -40,6 +40,7 @@ public class ShooterPidfTuner extends LinearOpMode {
     private static final double DEFAULT_TARGET_RPM = 1000.0;
     private static final double RPM_STEP = 100.0;
     private static final int LOOP_PERIOD_MS = 40;
+    private static final long VELOCITY_REFRESH_NANOS = 250_000_000L;
     private static final double START_X = 9.0;
     private static final double START_Y = 9.0;
     private static final double START_HEADING = 0.0; // Radians; face along field +X.
@@ -51,6 +52,8 @@ public class ShooterPidfTuner extends LinearOpMode {
 
     private CachedMotor shooterMotorLeft;
     private CachedMotor shooterMotorRight;
+    private final VelocityTarget leftVelocityTarget = new VelocityTarget();
+    private final VelocityTarget rightVelocityTarget = new VelocityTarget();
     private CachedServo hoodServo;
     private Localizer localizer;
     private String pinpointFault;
@@ -153,7 +156,7 @@ public class ShooterPidfTuner extends LinearOpMode {
                             : "Fit both curves to matched lowest-reliable-RPM shot rows";
                 }
                 validTargets &= command_flywheels(velocity.is_valid()
-                        && (!rightMotorEnabled || velocity2.is_valid()));
+                        && (!rightMotorEnabled || velocity2.is_valid()), System.nanoTime());
 
                 if (gamepad2.aWasPressed()) {
                     if (localizer == null || hoodServo == null) {
@@ -326,22 +329,47 @@ public class ShooterPidfTuner extends LinearOpMode {
     }
 
     private void apply_pidf() {
-        if (shooterMotorLeft != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
+        if (!SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) return;
+        if (shooterMotorLeft != null) {
+            leftVelocityTarget.invalidate();
             shooterMotorLeft.invalidate();
             shooterMotorLeft.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
         }
-        if (shooterMotorRight != null && SensorReadings.are_valid(pidf.p, pidf.i, pidf.d, pidf.f)) {
+        if (shooterMotorRight != null) {
+            rightVelocityTarget.invalidate();
             shooterMotorRight.invalidate();
             shooterMotorRight.raw().setVelocityPIDFCoefficients(pidf.p, pidf.i, pidf.d, pidf.f);
         }
     }
 
-    private boolean command_flywheels(boolean velocityValid) {
+    private boolean command_flywheels(boolean velocityValid, long now) {
         double targetVelocity = shooterEnabled && validTargets && velocityValid
                 ? rpm_to_ticks_per_second(commandedRpm) : 0.0;
-        boolean accepted = shooterMotorLeft.set_velocity(targetVelocity);
-        accepted &= shooterMotorRight.set_velocity(rightMotorEnabled ? targetVelocity : 0.0);
+        boolean accepted = leftVelocityTarget.command(shooterMotorLeft, targetVelocity, now);
+        accepted &= rightVelocityTarget.command(shooterMotorRight, rightMotorEnabled ? targetVelocity : 0.0, now);
         return accepted;
+    }
+
+    private static final class VelocityTarget {
+        private double lastTarget = Double.NaN;
+        private long lastWriteNanos;
+
+        private void invalidate() {
+            lastTarget = Double.NaN;
+        }
+
+        private boolean command(CachedMotor motor, double target, long now) {
+            // Lynx reports some transport errors internally. Refresh periodically to retry a lost write.
+            if (target == lastTarget) {
+                if (now - lastWriteNanos < VELOCITY_REFRESH_NANOS) return true;
+                motor.invalidate();
+            }
+            invalidate();
+            if (!motor.set_velocity(target)) return false;
+            lastTarget = target;
+            lastWriteNanos = now;
+            return true;
+        }
     }
 
     private void update_model_controls() {
