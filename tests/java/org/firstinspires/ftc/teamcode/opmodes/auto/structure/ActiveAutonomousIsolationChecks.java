@@ -41,6 +41,7 @@ public final class ActiveAutonomousIsolationChecks {
         default_auto_never_enters_optional_hooks();
         default_teleop_never_enters_optional_hooks();
         dormant_queue_calls_have_no_effect();
+        queued_shooting_prepares_before_driving();
         active_exports_retain_their_authored_sequences();
         disabled_vision_benches_stay_disabled();
         System.out.println("Active autonomous/TeleOp isolation checks passed: " + checks);
@@ -136,9 +137,10 @@ public final class ActiveAutonomousIsolationChecks {
             check(!(Boolean) enabled.invoke(auto), "active export inherits disabled assistance: " + types[route][side].getSimpleName());
             invoke_build(auto);
             List<Path> paths = captured_paths(actions(auto));
+            int shootingApproaches = shots[route] - 1;
             check(paths.size() == endpoints[route].length
-                            && actions(auto).size() == paths.size() + shots[route],
-                    "active export retains pickup, shot and authored-parking action counts: " + types[route][side].getSimpleName());
+                            && actions(auto).size() == paths.size() + shots[route] + shootingApproaches,
+                    "active export retains authored paths/shots and prepares each shooting approach: " + types[route][side].getSimpleName());
             for (int p = 0; p < paths.size(); p++) {
                 Pose expected = field_pose((Pose) value(auto, endpoints[route][p]), alliance);
                 check(paths.get(p).endPose().distance(expected) < 1e-8,
@@ -177,10 +179,37 @@ public final class ActiveAutonomousIsolationChecks {
         for (Object action : actions) for (Field field : action.getClass().getDeclaredFields()) {
             if (Path.class.isAssignableFrom(field.getType())) {
                 field.setAccessible(true);
-                paths.add((Path) field.get(action));
+                Path path = (Path) field.get(action);
+                if (paths.isEmpty() || paths.get(paths.size() - 1) != path) paths.add(path);
             }
         }
         return paths;
+    }
+
+    private static void queued_shooting_prepares_before_driving() throws Exception {
+        Path path = Paths.line(new Pose(10, 20, 0), new Pose(30, 40, 0)).constant(0);
+        int[] preparations = {0}, shots = {0};
+        AbstractAuto auto = new AbstractAuto() {
+            @Override protected Pose starting_pose() { return path.get(0); }
+            @Override protected void build_autonomous() { queue_shoot_path(path, 0.01); }
+        };
+        auto.shooterSubsystem = new Shooter() {
+            @Override public void prepare_shot_at(double x, double y) {
+                check(x == path.endPose().x() && y == path.endPose().y(),
+                        "approach preparation uses the planned shooting destination");
+                preparations[0]++;
+            }
+            @Override public void shoot() { shots[0]++; }
+        };
+        invoke_build(auto);
+        List<?> queued = actions(auto);
+        check(queued.size() == 3 && preparations[0] == 0 && shots[0] == 0,
+                "INIT only queues preparation, driving and shooting");
+        ((Runnable) queued.get(0)).run();
+        check(preparations[0] == 1 && shots[0] == 0,
+                "the first queued action prepares without feeding or starting the follower");
+        check(captured_paths(queued.subList(1, 2)).get(0) == path,
+                "the shooting approach follows preparation before the queued shot");
     }
 
     private static List<?> actions(Object object) throws Exception { return (List<?>) value(object, "actions"); }

@@ -458,8 +458,7 @@ abstract class General extends LinearOpMode {
     }
 
     protected final void queue_shoot_path(Path path, double shotDurationSeconds) {
-        // Once the distance model is calibrated, optionally start preparing during the approach.
-        // actions.add(() -> prepare_shot_at_path_end(path));
+        actions.add(() -> prepare_shot_at_path_end(path));
         queue_path(path);
         queue_shot(shotDurationSeconds);
     }
