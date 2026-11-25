@@ -2,14 +2,14 @@ package org.firstinspires.ftc.teamcode.core.control;
 
 /** Work time excludes telemetry; cycle time includes everything between consecutive starts. */
 public final class LoopTiming {
+    /** Interval configured for FTC telemetry transmission. */
     public static final int TELEMETRY_INTERVAL_MS = 100;
-    private static final long TELEMETRY_INTERVAL_NANOS = TELEMETRY_INTERVAL_MS * 1_000_000L;
+    private static final int TELEMETRY_INTERVAL_LOOPS = 20;
 
     private long previousStart;
     private long currentStart;
-    private long workEnd;
-    private long lastTelemetry;
-    private boolean telemetryPublished;
+    private int completedLoopsInTelemetryInterval;
+    private boolean telemetryDue;
     private double cycleMs;
     private double workMs;
 
@@ -20,15 +20,16 @@ public final class LoopTiming {
     }
 
     public void end_work() {
-        workEnd = System.nanoTime();
-        workMs = (workEnd - currentStart) / 1e6;
+        workMs = (System.nanoTime() - currentStart) / 1e6;
+        completedLoopsInTelemetryInterval++;
+        telemetryDue = completedLoopsInTelemetryInterval == TELEMETRY_INTERVAL_LOOPS;
+        if (telemetryDue) completedLoopsInTelemetryInterval = 0;
     }
 
-    /** Consume a publication slot after end_work(), measured from the previous slot. */
+    /** Consume the publication slot offered after every twentieth completed loop. */
     public boolean should_publish_telemetry() {
-        if (telemetryPublished && workEnd - lastTelemetry < TELEMETRY_INTERVAL_NANOS) return false;
-        lastTelemetry = workEnd;
-        telemetryPublished = true;
+        if (!telemetryDue) return false;
+        telemetryDue = false;
         return true;
     }
 
