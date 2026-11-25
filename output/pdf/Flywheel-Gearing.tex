@@ -1,0 +1,35 @@
+% Compile with pdfLaTeX in Overleaf.
+\documentclass[11pt,border=0pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[mainfont]{Oswald}
+\usepackage{amsmath,xcolor}
+\usepackage{mathastext}
+
+\definecolor{panel}{HTML}{1E1E1E}
+\setlength{\fboxsep}{4mm}
+\setlength{\parindent}{0pt}
+
+\begin{document}
+\colorbox{panel}{%
+  \begin{minipage}{94mm}
+  \color{white}\raggedright
+  \setlength{\fboxsep}{3pt}
+  \setlength{\abovedisplayskip}{6pt}
+  \setlength{\abovedisplayshortskip}{6pt}
+  \setlength{\belowdisplayskip}{6pt}
+  \setlength{\belowdisplayshortskip}{6pt}
+  {\Large\bfseries Flywheel reduction\par}
+  \smallskip
+  We assumed an average motor speed of \(3{,}000\)~RPM and an estimated
+  average flywheel speed of \(2{,}500\)~RPM.
+  \[
+    \begin{aligned}
+      \text{Reduction factor} & =
+        \frac{\text{motor speed}}{\text{estimated average flywheel speed}} \\
+      & = \frac{3{,}000}{2{,}500} = \boxed{1.2}
+    \end{aligned}
+  \]
+  \textbf{\(1{:}1.2\) reduction} (flywheel turns to motor turns).\par
+  \end{minipage}%
+}
+\end{document}

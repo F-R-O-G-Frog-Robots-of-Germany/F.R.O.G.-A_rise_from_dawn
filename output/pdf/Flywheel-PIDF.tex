@@ -1,0 +1,45 @@
+% Compile with pdfLaTeX in Overleaf.
+\documentclass[11pt,border=0pt]{standalone}
+\usepackage[T1]{fontenc}
+\usepackage[mainfont]{Oswald}
+\usepackage{amsmath,xcolor}
+\usepackage{mathastext}
+
+\definecolor{panel}{HTML}{1E1E1E}
+\definecolor{secondary}{HTML}{D0D0D0}
+\setlength{\fboxsep}{4mm}
+\setlength{\parindent}{0pt}
+\newcommand{\term}[2]{%
+  \underbrace{\vphantom{\displaystyle\sum\frac{\Delta e}{\Delta t}}#1}%
+  _{\text{\color{secondary}#2}}%
+}
+
+\begin{document}
+\colorbox{panel}{%
+  \begin{minipage}{94mm}
+  \color{white}
+  \setlength{\abovedisplayskip}{8pt}
+  \setlength{\abovedisplayshortskip}{8pt}
+  \setlength{\belowdisplayskip}{4pt}
+  \setlength{\belowdisplayshortskip}{4pt}
+  Error \(e = \text{target speed} - \text{measured speed}\)
+  {\color{secondary}(encoder ticks/s)}.\par
+  \[
+    \text{PIDF} =
+    \term{K_P e}{Proportional}
+    + \term{K_I \sum e\,\Delta t}{Integral}
+    + \term{K_D \frac{\Delta e}{\Delta t}}{Derivative}
+    + \term{K_F \times \text{target speed}}{Feedforward}
+  \]
+
+  \[
+    \text{\bfseries Motor output} =
+    \begin{cases}
+      0, & \text{zero target or above target}, \\
+      1, & \text{more than }150\,\text{RPM below target}, \\
+      \text{PIDF}, & \text{otherwise}.
+    \end{cases}
+  \]
+  \end{minipage}%
+}
+\end{document}
